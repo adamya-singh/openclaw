@@ -46,6 +46,76 @@ type BrowserNodeTarget = {
   label?: string;
 };
 
+function normalizeActRequest(params: Record<string, unknown>): Record<string, unknown> | undefined {
+  const request = params.request;
+  if (request && typeof request === "object") {
+    const normalized = { ...(request as Record<string, unknown>) };
+    // Backward compatibility: some model outputs send these at top-level.
+    for (const key of [
+      "kind",
+      "targetId",
+      "ref",
+      "doubleClick",
+      "button",
+      "modifiers",
+      "text",
+      "submit",
+      "slowly",
+      "key",
+      "startRef",
+      "endRef",
+      "values",
+      "fields",
+      "width",
+      "height",
+      "timeMs",
+      "textGone",
+      "fn",
+      "timeoutMs",
+      "delayMs",
+    ]) {
+      if (normalized[key] === undefined && params[key] !== undefined) {
+        normalized[key] = params[key];
+      }
+    }
+    return normalized;
+  }
+
+  if (params.kind !== undefined) {
+    const normalized: Record<string, unknown> = {};
+    for (const key of [
+      "kind",
+      "targetId",
+      "ref",
+      "doubleClick",
+      "button",
+      "modifiers",
+      "text",
+      "submit",
+      "slowly",
+      "key",
+      "startRef",
+      "endRef",
+      "values",
+      "fields",
+      "width",
+      "height",
+      "timeMs",
+      "textGone",
+      "fn",
+      "timeoutMs",
+      "delayMs",
+    ]) {
+      if (params[key] !== undefined) {
+        normalized[key] = params[key];
+      }
+    }
+    return normalized;
+  }
+
+  return undefined;
+}
+
 function isBrowserNode(node: NodeListNode) {
   const caps = Array.isArray(node.caps) ? node.caps : [];
   const commands = Array.isArray(node.commands) ? node.commands : [];
@@ -674,7 +744,7 @@ export function createBrowserTool(opts?: {
           );
         }
         case "act": {
-          const request = params.request as Record<string, unknown> | undefined;
+          const request = normalizeActRequest(params);
           if (!request || typeof request !== "object") {
             throw new Error("request required");
           }

@@ -25,6 +25,17 @@ const browserClientMocks = vi.hoisted(() => ({
 }));
 vi.mock("../../browser/client.js", () => browserClientMocks);
 
+const browserActionMocks = vi.hoisted(() => ({
+  browserAct: vi.fn(async () => ({ ok: true })),
+  browserArmDialog: vi.fn(async () => ({ ok: true })),
+  browserArmFileChooser: vi.fn(async () => ({ ok: true })),
+  browserConsoleMessages: vi.fn(async () => ({ events: [] })),
+  browserNavigate: vi.fn(async () => ({ ok: true })),
+  browserPdfSave: vi.fn(async () => ({ ok: true })),
+  browserScreenshotAction: vi.fn(async () => ({ ok: true })),
+}));
+vi.mock("../../browser/client-actions.js", () => browserActionMocks);
+
 const browserConfigMocks = vi.hoisted(() => ({
   resolveBrowserConfig: vi.fn(() => ({
     enabled: true,
@@ -287,5 +298,59 @@ describe("browser tool snapshot labels", () => {
     expect(result?.content).toHaveLength(2);
     expect(result?.content?.[0]).toMatchObject({ type: "text", text: "label text" });
     expect(result?.content?.[1]).toMatchObject({ type: "image" });
+  });
+});
+
+describe("browser tool act request normalization", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    configMocks.loadConfig.mockReturnValue({ browser: {} });
+    nodesUtilsMocks.listNodes.mockResolvedValue([]);
+  });
+
+  it("accepts top-level act args for backward compatibility", async () => {
+    const tool = createBrowserTool();
+    await tool.execute?.(null, {
+      action: "act",
+      kind: "click",
+      ref: "e12",
+      targetId: "tab-1",
+    });
+
+    expect(browserActionMocks.browserAct).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        kind: "click",
+        ref: "e12",
+        targetId: "tab-1",
+      }),
+      expect.objectContaining({
+        profile: undefined,
+      }),
+    );
+  });
+
+  it("merges top-level act args into nested request when missing there", async () => {
+    const tool = createBrowserTool();
+    await tool.execute?.(null, {
+      action: "act",
+      targetId: "tab-2",
+      request: {
+        kind: "click",
+        ref: "e28",
+      },
+    });
+
+    expect(browserActionMocks.browserAct).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        kind: "click",
+        ref: "e28",
+        targetId: "tab-2",
+      }),
+      expect.objectContaining({
+        profile: undefined,
+      }),
+    );
   });
 });
