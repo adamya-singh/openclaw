@@ -422,3 +422,57 @@ describe("browser tool external content wrapping", () => {
     });
   });
 });
+
+describe("browser tool act request normalization", () => {
+  afterEach(() => {
+    vi.clearAllMocks();
+    configMocks.loadConfig.mockReturnValue({ browser: {} });
+    nodesUtilsMocks.listNodes.mockResolvedValue([]);
+  });
+
+  it("accepts top-level act args for backward compatibility", async () => {
+    const tool = createBrowserTool();
+    await tool.execute?.(null, {
+      action: "act",
+      kind: "click",
+      ref: "e12",
+      targetId: "tab-1",
+    });
+
+    expect(browserActionsMocks.browserAct).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        kind: "click",
+        ref: "e12",
+        targetId: "tab-1",
+      }),
+      expect.objectContaining({
+        profile: undefined,
+      }),
+    );
+  });
+
+  it("merges top-level act args into nested request when missing there", async () => {
+    const tool = createBrowserTool();
+    await tool.execute?.(null, {
+      action: "act",
+      targetId: "tab-2",
+      request: {
+        kind: "click",
+        ref: "e28",
+      },
+    });
+
+    expect(browserActionsMocks.browserAct).toHaveBeenCalledWith(
+      undefined,
+      expect.objectContaining({
+        kind: "click",
+        ref: "e28",
+        targetId: "tab-2",
+      }),
+      expect.objectContaining({
+        profile: undefined,
+      }),
+    );
+  });
+});
