@@ -22,6 +22,7 @@ export async function buildNodeInstallPlan(params: {
   port: number;
   tls?: boolean;
   tlsFingerprint?: string;
+  token?: string;
   nodeId?: string;
   displayName?: string;
   runtime: NodeDaemonRuntime;
@@ -56,7 +57,10 @@ export async function buildNodeInstallPlan(params: {
     title: "Node daemon runtime",
   });
 
-  const environment = buildNodeServiceEnvironment({ env: params.env });
+  const environment = buildNodeServiceEnvironment({
+    env: params.env,
+    token: params.token,
+  });
   const description = formatNodeServiceDescription({
     version: environment.OPENCLAW_SERVICE_VERSION,
   });

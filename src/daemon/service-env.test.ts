@@ -364,38 +364,25 @@ describe("buildNodeServiceEnvironment", () => {
     expect(env.HOME).toBe("/home/user");
   });
 
-  it("passes through OPENCLAW_GATEWAY_TOKEN for node services", () => {
+  it("omits gateway token for node services unless explicitly provided", () => {
     const env = buildNodeServiceEnvironment({
       env: { HOME: "/home/user", OPENCLAW_GATEWAY_TOKEN: " node-token " },
+    });
+    expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
+  });
+
+  it("accepts an explicit gateway token for node services", () => {
+    const env = buildNodeServiceEnvironment({
+      env: { HOME: "/home/user" },
+      token: " node-token ",
     });
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("node-token");
   });
 
-  it("maps legacy CLAWDBOT_GATEWAY_TOKEN to OPENCLAW_GATEWAY_TOKEN for node services", () => {
+  it("omits OPENCLAW_GATEWAY_TOKEN when the explicit node service token is empty", () => {
     const env = buildNodeServiceEnvironment({
-      env: { HOME: "/home/user", CLAWDBOT_GATEWAY_TOKEN: " legacy-token " },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("legacy-token");
-  });
-
-  it("prefers OPENCLAW_GATEWAY_TOKEN over legacy CLAWDBOT_GATEWAY_TOKEN", () => {
-    const env = buildNodeServiceEnvironment({
-      env: {
-        HOME: "/home/user",
-        OPENCLAW_GATEWAY_TOKEN: "openclaw-token",
-        CLAWDBOT_GATEWAY_TOKEN: "legacy-token",
-      },
-    });
-    expect(env.OPENCLAW_GATEWAY_TOKEN).toBe("openclaw-token");
-  });
-
-  it("omits OPENCLAW_GATEWAY_TOKEN when both token env vars are empty", () => {
-    const env = buildNodeServiceEnvironment({
-      env: {
-        HOME: "/home/user",
-        OPENCLAW_GATEWAY_TOKEN: "   ",
-        CLAWDBOT_GATEWAY_TOKEN: " ",
-      },
+      env: { HOME: "/home/user" },
+      token: "   ",
     });
     expect(env.OPENCLAW_GATEWAY_TOKEN).toBeUndefined();
   });

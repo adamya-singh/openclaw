@@ -13,6 +13,9 @@ import { shortenHomePath } from "../utils.js";
 import { callBrowserRequest, type BrowserParentOpts } from "./browser-cli-shared.js";
 import { runCommandWithRuntime } from "./cli-utils.js";
 
+const BROWSER_START_GATEWAY_RETRY_MS = 20_000;
+const BROWSER_START_GATEWAY_RETRY_INTERVAL_MS = 1_000;
+
 async function fetchBrowserStatus(
   parent: BrowserParentOpts,
   profile?: string,
@@ -30,19 +33,52 @@ async function fetchBrowserStatus(
   );
 }
 
+export function shouldRetryBrowserStartGatewayError(err: unknown): boolean {
+  const message = String(err).toLowerCase();
+  return (
+    message.includes("gateway closed (1006") ||
+    message.includes("econnrefused") ||
+    message.includes("connect econnrefused") ||
+    message.includes("fetch failed")
+  );
+}
+
+async function wait(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function runBrowserToggle(
   parent: BrowserParentOpts,
   params: { profile?: string; path: string },
 ) {
-  await callBrowserRequest(
-    parent,
-    {
-      method: "POST",
-      path: params.path,
-      query: params.profile ? { profile: params.profile } : undefined,
-    },
-    { timeoutMs: 15000 },
-  );
+  const request = async () =>
+    await callBrowserRequest(
+      parent,
+      {
+        method: "POST",
+        path: params.path,
+        query: params.profile ? { profile: params.profile } : undefined,
+      },
+      { timeoutMs: 15000 },
+    );
+
+  if (params.path === "/start") {
+    const deadline = Date.now() + BROWSER_START_GATEWAY_RETRY_MS;
+    for (;;) {
+      try {
+        await request();
+        break;
+      } catch (err) {
+        if (!shouldRetryBrowserStartGatewayError(err) || Date.now() >= deadline) {
+          throw err;
+        }
+        await wait(BROWSER_START_GATEWAY_RETRY_INTERVAL_MS);
+      }
+    }
+  } else {
+    await request();
+  }
+
   const status = await fetchBrowserStatus(parent, params.profile);
   if (parent?.json) {
     defaultRuntime.log(JSON.stringify(status, null, 2));

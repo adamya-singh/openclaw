@@ -381,8 +381,17 @@ export async function runCronIsolatedAgentTurn(params: {
     commandBody = `${base}\n${timeLine}`.trim();
   }
   if (deliveryRequested) {
-    commandBody =
-      `${commandBody}\n\nReturn your summary as plain text; it will be delivered automatically. If the task explicitly calls for messaging a specific external recipient, note who/where it should go instead of sending it yourself.`.trim();
+    const allowDirectStructuredDelivery =
+      resolvedDelivery.ok && resolvedDelivery.mode === "explicit";
+    const deliveryInstructions = allowDirectStructuredDelivery
+      ? [
+          "Default: return your summary as plain text; it will be delivered automatically.",
+          "If you need structured channel-specific output for the explicit delivery target (for example Telegram inline buttons), send it yourself with the message tool instead of embedding JSON in plain text.",
+          `Explicit delivery target: channel=${resolvedDelivery.channel}, to=${resolvedDelivery.to}${resolvedDelivery.accountId ? `, accountId=${resolvedDelivery.accountId}` : ""}${resolvedDelivery.threadId !== undefined ? `, threadId=${String(resolvedDelivery.threadId)}` : ""}.`,
+          "If you already sent the final message via the message tool to that target, do not send a duplicate plain-text version of the same content.",
+        ].join(" ")
+      : "Return your summary as plain text; it will be delivered automatically. If the task explicitly calls for messaging a specific external recipient, note who/where it should go instead of sending it yourself.";
+    commandBody = `${commandBody}\n\n${deliveryInstructions}`.trim();
   }
 
   const existingSkillsSnapshot = cronSession.sessionEntry.skillsSnapshot;
@@ -409,6 +418,9 @@ export async function runCronIsolatedAgentTurn(params: {
   cronSession.sessionEntry.modelProvider = provider;
   cronSession.sessionEntry.model = model;
   cronSession.sessionEntry.systemSent = true;
+  const allowDirectMessagingToolDelivery =
+    deliveryRequested && resolvedDelivery.ok && resolvedDelivery.mode === "explicit";
+
   try {
     await persistSessionEntry();
   } catch (err) {
@@ -512,7 +524,7 @@ export async function runCronIsolatedAgentTurn(params: {
           // was successfully resolved. When resolution fails the agent should not
           // be blocked by a target it cannot satisfy (#27898).
           requireExplicitMessageTarget: deliveryRequested && resolvedDelivery.ok,
-          disableMessageTool: deliveryRequested || deliveryPlan.mode === "none",
+          disableMessageTool: !allowDirectMessagingToolDelivery || deliveryPlan.mode === "none",
           abortSignal,
         });
       },

@@ -275,12 +275,12 @@ export function buildServiceEnvironment(params: {
 
 export function buildNodeServiceEnvironment(params: {
   env: Record<string, string | undefined>;
+  token?: string;
   platform?: NodeJS.Platform;
 }): Record<string, string | undefined> {
   const { env } = params;
   const platform = params.platform ?? process.platform;
-  const gatewayToken =
-    env.OPENCLAW_GATEWAY_TOKEN?.trim() || env.CLAWDBOT_GATEWAY_TOKEN?.trim() || undefined;
+  const gatewayToken = params.token?.trim() || undefined;
   const stateDir = env.OPENCLAW_STATE_DIR;
   const configPath = env.OPENCLAW_CONFIG_PATH;
   const tmpDir = env.TMPDIR?.trim() || os.tmpdir();

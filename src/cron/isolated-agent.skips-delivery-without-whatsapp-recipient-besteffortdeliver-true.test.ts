@@ -1,6 +1,7 @@
 import "./isolated-agent.mocks.js";
 import fs from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { runEmbeddedPiAgent } from "../agents/pi-embedded.js";
 import { runSubagentAnnounceFlow } from "../agents/subagent-announce.js";
 import type { CliDeps } from "../cli/deps.js";
 import {
@@ -215,6 +216,33 @@ describe("runCronIsolatedAgentTurn", () => {
       });
 
       expectDeliveredOk(res);
+      expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
+      expect(deps.sendMessageTelegram).not.toHaveBeenCalled();
+    });
+  });
+
+  it("allows explicit telegram targets to use the message tool for structured replies", async () => {
+    await withTempCronHome(async (home) => {
+      const storePath = await writeSessionStore(home, { lastProvider: "webchat", lastTo: "" });
+      const deps = createCliDeps();
+      mockAgentPayloads([{ text: "sent" }], {
+        didSendViaMessagingTool: true,
+        messagingToolSentTargets: [{ tool: "message", provider: "telegram", to: "123" }],
+      });
+
+      const res = await runExplicitTelegramAnnounceTurn({
+        home,
+        storePath,
+        deps,
+      });
+
+      expectDeliveredOk(res);
+      const runCall = vi.mocked(runEmbeddedPiAgent).mock.calls[0]?.[0] as
+        | { disableMessageTool?: boolean; prompt?: string }
+        | undefined;
+      expect(runCall?.disableMessageTool).toBe(false);
+      expect(runCall?.prompt).toContain("send it yourself with the message tool");
+      expect(runCall?.prompt).toContain("Explicit delivery target: channel=telegram, to=123.");
       expect(runSubagentAnnounceFlow).not.toHaveBeenCalled();
       expect(deps.sendMessageTelegram).not.toHaveBeenCalled();
     });
