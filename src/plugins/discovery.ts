@@ -306,8 +306,11 @@ function isExtensionFile(filePath: string): boolean {
   const baseName = normalizeLowercaseStringOrEmpty(path.basename(filePath));
   return (
     !baseName.includes(".test.") &&
+    !baseName.endsWith(".test") &&
     !baseName.includes(".live.test.") &&
-    !baseName.includes(".e2e.test.")
+    !baseName.endsWith(".live.test") &&
+    !baseName.includes(".e2e.test.") &&
+    !baseName.endsWith(".e2e.test")
   );
 }
 

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { PluginCandidate } from "./discovery.js";
+import { discoverOpenClawPlugins } from "./discovery.js";
 import {
   clearPluginManifestRegistryCache,
   loadPluginManifestRegistry,
@@ -310,6 +311,42 @@ afterEach(() => {
 });
 
 describe("loadPluginManifestRegistry", () => {
+  it("does not emit a shared bundled root manifest error for ignored test artifacts", () => {
+    const stateDir = makeTempDir();
+    const extensionsDir = path.join(stateDir, "extensions");
+    mkdirSafe(extensionsDir);
+    fs.writeFileSync(
+      path.join(extensionsDir, "music-generation-providers.live.test.ts"),
+      "export default function () {}",
+      "utf-8",
+    );
+    fs.writeFileSync(
+      path.join(extensionsDir, "video-generation-providers.live.test.ts"),
+      "export default function () {}",
+      "utf-8",
+    );
+
+    const discovery = discoverOpenClawPlugins({
+      env: {
+        OPENCLAW_STATE_DIR: stateDir,
+        OPENCLAW_HOME: undefined,
+        OPENCLAW_BUNDLED_PLUGINS_DIR: "/nonexistent/bundled/plugins",
+      },
+    });
+    const registry = loadPluginManifestRegistry({
+      cache: false,
+      candidates: discovery.candidates,
+    });
+
+    expect(
+      registry.diagnostics.some(
+        (diag) =>
+          diag.message.includes("plugin manifest not found") &&
+          diag.message.includes(`${path.sep}extensions${path.sep}openclaw.plugin.json`),
+      ),
+    ).toBe(false);
+  });
+
   it("emits duplicate warning for truly distinct plugins with same id", () => {
     const dirA = makeTempDir();
     const dirB = makeTempDir();

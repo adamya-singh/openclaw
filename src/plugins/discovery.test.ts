@@ -548,6 +548,36 @@ describe("discoverOpenClawPlugins", () => {
     expectCandidateIds(candidates, { includes, excludes });
   });
 
+  it("ignores top-level live and e2e test files in the bundled extensions root", async () => {
+    const stateDir = makeTempDir();
+    const extensionsDir = path.join(stateDir, "extensions");
+    mkdirSafe(extensionsDir);
+    writeStandalonePlugin(path.join(extensionsDir, "music-generation-providers.live.test.ts"));
+    writeStandalonePlugin(path.join(extensionsDir, "video-generation-providers.live.test.ts"));
+    writeStandalonePlugin(path.join(extensionsDir, "gateway.e2e.test.ts"));
+    writeStandalonePlugin(path.join(extensionsDir, "browser.test.ts"));
+    const packageDir = path.join(extensionsDir, "browser");
+    createPackagePluginWithEntry({
+      packageDir,
+      packageName: "@openclaw/browser-plugin",
+      pluginId: "browser",
+      entryPath: "src/index.ts",
+    });
+
+    const result = await discoverWithStateDir(stateDir, {});
+
+    expectCandidatePresence(result, {
+      present: ["browser"],
+      absent: [
+        "music-generation-providers.live.test",
+        "video-generation-providers.live.test",
+        "gateway.e2e.test",
+        "browser.test",
+      ],
+    });
+    expect(result.candidates.every((candidate) => candidate.rootDir !== extensionsDir)).toBe(true);
+  });
+
   it.each([
     {
       name: "auto-detects Codex bundles as bundle candidates",

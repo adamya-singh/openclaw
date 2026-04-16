@@ -801,6 +801,8 @@ describe("buildAgentSystemPrompt", () => {
     });
 
     expect(prompt).toContain("buttons=[[{text,callback_data,style?}]]");
+    expect(prompt).toContain("`text` is the visible label");
+    expect(prompt).toContain("They may differ");
     expect(prompt).toContain("`style` can be `primary`, `success`, or `danger`");
   });
 

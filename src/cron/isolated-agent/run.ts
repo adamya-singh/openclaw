@@ -99,6 +99,10 @@ function resolveCronToolPolicy(params: {
   resolvedDelivery: ResolvedCronDeliveryTarget;
   deliveryContract: IsolatedDeliveryContract;
 }) {
+  const allowDirectMessagingToolDelivery =
+    params.deliveryRequested &&
+    params.resolvedDelivery.ok &&
+    params.resolvedDelivery.mode === "explicit";
   return {
     // Only enforce an explicit message target when the cron delivery target
     // was successfully resolved. When resolution fails the agent should not
@@ -107,7 +111,9 @@ function resolveCronToolPolicy(params: {
     // Cron-owned runs always route user-facing delivery through the runner
     // itself. Shared callers keep the previous behavior so non-cron paths do
     // not silently lose the message tool when no explicit delivery is active.
-    disableMessageTool: params.deliveryContract === "cron-owned" ? true : params.deliveryRequested,
+    disableMessageTool:
+      !allowDirectMessagingToolDelivery &&
+      (params.deliveryContract === "cron-owned" ? true : params.deliveryRequested),
   };
 }
 
@@ -161,9 +167,13 @@ async function resolveCronDeliveryContext(params: {
 function appendCronDeliveryInstruction(params: {
   commandBody: string;
   deliveryRequested: boolean;
+  resolvedDelivery: ResolvedCronDeliveryTarget;
 }) {
   if (!params.deliveryRequested) {
     return params.commandBody;
+  }
+  if (params.resolvedDelivery.ok && params.resolvedDelivery.mode === "explicit") {
+    return `${params.commandBody}\n\nDefault: return your summary as plain text; it will be delivered automatically. If you need structured channel-specific output for the explicit delivery target (for example Telegram inline buttons), send it yourself with the message tool instead of embedding JSON in plain text. Explicit delivery target: channel=${params.resolvedDelivery.channel}, to=${params.resolvedDelivery.to}${params.resolvedDelivery.accountId ? `, accountId=${params.resolvedDelivery.accountId}` : ""}${params.resolvedDelivery.threadId !== undefined ? `, threadId=${String(params.resolvedDelivery.threadId)}` : ""}. If you already sent the final message via the message tool to that target, do not send a duplicate plain-text version of the same content.`.trim();
   }
   return `${params.commandBody}\n\nReturn your summary as plain text; it will be delivered automatically. If the task explicitly calls for messaging a specific external recipient, note who/where it should go instead of sending it yourself.`.trim();
 }
@@ -402,7 +412,11 @@ async function prepareCronRunContext(params: {
   } else {
     commandBody = `${base}\n${timeLine}`.trim();
   }
-  commandBody = appendCronDeliveryInstruction({ commandBody, deliveryRequested });
+  commandBody = appendCronDeliveryInstruction({
+    commandBody,
+    deliveryRequested,
+    resolvedDelivery,
+  });
 
   const skillsSnapshot = resolveCronSkillsSnapshot({
     workspaceDir,
@@ -597,8 +611,9 @@ async function finalizeCronRun(params: {
     prepared.deliveryRequested &&
     isHeartbeatOnlyResponse(payloads, resolveHeartbeatAckMaxChars(prepared.agentCfg));
   const skipMessagingToolDelivery =
-    (prepared.input.deliveryContract ?? "cron-owned") === "shared" &&
     prepared.deliveryRequested &&
+    prepared.resolvedDelivery.ok &&
+    prepared.resolvedDelivery.mode === "explicit" &&
     finalRunResult.didSendViaMessagingTool === true &&
     (finalRunResult.messagingToolSentTargets ?? []).some((target) =>
       matchesMessagingToolDeliveryTarget(target, {
