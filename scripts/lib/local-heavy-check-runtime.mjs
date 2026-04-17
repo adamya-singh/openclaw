@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -96,8 +95,7 @@ export function acquireLocalHeavyCheckLockSync(params) {
     return () => {};
   }
 
-  const commonDir = resolveGitCommonDir(params.cwd);
-  const locksDir = path.join(commonDir, "openclaw-local-checks");
+  const locksDir = path.resolve(params.cwd, ".openclaw-local-checks");
   const lockDir = path.join(locksDir, `${params.lockName ?? "heavy-check"}.lock`);
   const ownerPath = path.join(lockDir, "owner.json");
   const timeoutMs = readPositiveInt(
@@ -116,20 +114,38 @@ export function acquireLocalHeavyCheckLockSync(params) {
   const startedAt = Date.now();
   let waitingLogged = false;
   let lastProgressAt = 0;
+  let heartbeatTimer = null;
 
   fs.mkdirSync(locksDir, { recursive: true });
 
   for (;;) {
     try {
       fs.mkdirSync(lockDir);
-      writeOwnerFile(ownerPath, {
+      const owner = {
         pid: process.pid,
         tool: params.toolName,
         cwd: params.cwd,
         hostname: os.hostname(),
         createdAt: new Date().toISOString(),
-      });
+      };
+      writeOwnerFile(ownerPath, owner);
+      touchLockDir(lockDir);
+      heartbeatTimer = setInterval(
+        () => {
+          try {
+            writeOwnerFile(ownerPath, owner);
+            touchLockDir(lockDir);
+          } catch {
+            // Best effort only. If this stops, stale-lock reclaim will take over.
+          }
+        },
+        Math.max(1000, Math.min(progressMs, Math.floor(staleLockMs / 2))),
+      );
+      heartbeatTimer.unref?.();
       return () => {
+        if (heartbeatTimer) {
+          clearInterval(heartbeatTimer);
+        }
         fs.rmSync(lockDir, { recursive: true, force: true });
       };
     } catch (error) {
@@ -178,23 +194,6 @@ export function acquireLocalHeavyCheckLockSync(params) {
   }
 }
 
-export function resolveGitCommonDir(cwd) {
-  const result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
-    cwd,
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-  });
-
-  if (result.status === 0) {
-    const raw = result.stdout.trim();
-    if (raw.length > 0) {
-      return path.resolve(cwd, raw);
-    }
-  }
-
-  return path.join(cwd, ".git");
-}
-
 function insertBeforeSeparator(args, ...items) {
   if (items.length > 0 && hasFlag(args, items[0])) {
     return;
@@ -237,6 +236,11 @@ function writeOwnerFile(ownerPath, owner) {
   fs.writeFileSync(ownerPath, `${JSON.stringify(owner, null, 2)}\n`, "utf8");
 }
 
+function touchLockDir(lockDir) {
+  const now = new Date();
+  fs.utimesSync(lockDir, now, now);
+}
+
 function readOwnerFile(ownerPath) {
   try {
     return JSON.parse(fs.readFileSync(ownerPath, "utf8"));
@@ -249,25 +253,12 @@ function isAlreadyExistsError(error) {
   return Boolean(error && typeof error === "object" && "code" in error && error.code === "EEXIST");
 }
 
-function shouldReclaimLock({ owner, lockDir, staleLockMs }) {
-  if (owner && typeof owner.pid === "number") {
-    return !isProcessAlive(owner.pid);
-  }
-
+function shouldReclaimLock({ lockDir, staleLockMs }) {
   try {
     const stats = fs.statSync(lockDir);
     return Date.now() - stats.mtimeMs >= staleLockMs;
   } catch {
     return true;
-  }
-}
-
-function isProcessAlive(pid) {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return Boolean(error && typeof error === "object" && "code" in error && error.code === "EPERM");
   }
 }
 

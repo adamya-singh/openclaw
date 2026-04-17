@@ -149,4 +149,106 @@ describe("cron service store seam coverage", () => {
     expect(raw.jobs[0]?.jobId).toBe("repro-stable-id");
     expect(raw.jobs[0]?.id).toBeUndefined();
   });
+
+  it("upgrades legacy Agentic Journal morning-pick jobs to isolated explicit delivery in memory", async () => {
+    const { storePath } = await makeStorePath();
+    const now = Date.parse("2026-04-16T12:00:00.000Z");
+
+    await fs.mkdir(path.dirname(storePath), { recursive: true });
+    await fs.writeFile(
+      storePath,
+      JSON.stringify(
+        {
+          version: 1,
+          jobs: [
+            {
+              id: "checkin-job",
+              agentId: "main",
+              name: "Hourly Check-in",
+              enabled: true,
+              createdAtMs: now - 120_000,
+              updatedAtMs: now - 120_000,
+              schedule: { kind: "cron", expr: "0 * * * *", tz: "America/New_York" },
+              sessionTarget: "isolated",
+              wakeMode: "now",
+              payload: {
+                kind: "agentTurn",
+                message: "[AJ_CHECKIN] Agentic Journal check-in reminder",
+              },
+              delivery: {
+                mode: "announce",
+                channel: "telegram",
+                to: "6420450714",
+                accountId: "default",
+              },
+              state: {},
+            },
+            {
+              id: "morning-pick-job",
+              agentId: "main",
+              name: "Morning Want-to-do Picker",
+              enabled: true,
+              createdAtMs: now - 60_000,
+              updatedAtMs: now - 60_000,
+              schedule: { kind: "cron", expr: "5 10 * * *", tz: "America/New_York" },
+              sessionTarget: "main",
+              wakeMode: "now",
+              payload: {
+                kind: "systemEvent",
+                text: "[AJ_MORNING_PICK] Agentic Journal morning pick reminder",
+              },
+              state: {},
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      "utf8",
+    );
+
+    const state = createCronServiceState({
+      storePath,
+      cronEnabled: true,
+      log: logger,
+      nowMs: () => now,
+      enqueueSystemEvent: vi.fn(),
+      requestHeartbeatNow: vi.fn(),
+      runIsolatedAgentJob: vi.fn(async () => ({ status: "ok" as const })),
+    });
+
+    await ensureLoaded(state);
+
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        storePath,
+        jobId: "morning-pick-job",
+        name: "Morning Want-to-do Picker",
+      }),
+      expect.stringContaining("upgraded legacy Agentic Journal morning-pick job"),
+    );
+
+    const upgraded = findJobOrThrow(state, "morning-pick-job");
+    expect(upgraded.sessionTarget).toBe("isolated");
+    expect(upgraded.payload).toEqual({
+      kind: "agentTurn",
+      message: "[AJ_MORNING_PICK] Agentic Journal morning pick reminder",
+    });
+    expect(upgraded.delivery).toEqual({
+      mode: "announce",
+      channel: "telegram",
+      to: "6420450714",
+      accountId: "default",
+    });
+
+    const raw = JSON.parse(await fs.readFile(storePath, "utf8")) as {
+      jobs: Array<Record<string, unknown>>;
+    };
+    expect(raw.jobs[1]?.sessionTarget).toBe("main");
+    expect(raw.jobs[1]?.payload).toMatchObject({
+      kind: "systemEvent",
+      text: "[AJ_MORNING_PICK] Agentic Journal morning pick reminder",
+    });
+    expect(raw.jobs[1]?.delivery).toBeUndefined();
+  });
 });

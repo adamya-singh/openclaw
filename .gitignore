@@ -15,6 +15,7 @@ __pycache__/
 .tsbuildinfo
 .pnpm-store
 .worktrees/
+.openclaw-local-checks/
 .DS_Store
 **/.DS_Store
 ui/src/ui/__screenshots__/

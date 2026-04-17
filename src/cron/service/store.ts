@@ -5,12 +5,74 @@ import type { CronJob } from "../types.js";
 import { recomputeNextRuns } from "./jobs.js";
 import type { CronServiceState } from "./state.js";
 
+const AJ_MORNING_PICK_TOKEN = "[AJ_MORNING_PICK]";
+const AJ_CHECKIN_TOKEN = "[AJ_CHECKIN]";
+
 async function getFileMtimeMs(path: string): Promise<number | null> {
   try {
     const stats = await fs.promises.stat(path);
     return stats.mtimeMs;
   } catch {
     return null;
+  }
+}
+
+function isLegacyAgenticJournalMorningPickJob(
+  job: CronJob,
+): job is CronJob & { payload: { kind: "systemEvent"; text: string } } {
+  return (
+    job.sessionTarget === "main" &&
+    job.payload.kind === "systemEvent" &&
+    job.payload.text.includes(AJ_MORNING_PICK_TOKEN)
+  );
+}
+
+function resolveAgenticJournalCheckInDeliveryTarget(
+  jobs: readonly CronJob[],
+  agentId: string | undefined,
+): CronJob["delivery"] | undefined {
+  const matches = jobs.filter(
+    (job) =>
+      job.sessionTarget === "isolated" &&
+      job.payload.kind === "agentTurn" &&
+      job.payload.message.includes(AJ_CHECKIN_TOKEN) &&
+      job.delivery?.mode === "announce" &&
+      typeof job.delivery.channel === "string" &&
+      job.delivery.channel.trim() &&
+      typeof job.delivery.to === "string" &&
+      job.delivery.to.trim(),
+  );
+  const sameAgent = matches.find((job) => job.agentId === agentId);
+  return (sameAgent ?? matches[0])?.delivery;
+}
+
+function upgradeLegacyAgenticJournalMorningPickJobs(state: CronServiceState, jobs: CronJob[]) {
+  for (const job of jobs) {
+    if (!isLegacyAgenticJournalMorningPickJob(job)) {
+      continue;
+    }
+    const target = resolveAgenticJournalCheckInDeliveryTarget(jobs, job.agentId);
+    if (!target?.channel || !target.to) {
+      continue;
+    }
+    const message = job.payload.text;
+    job.sessionTarget = "isolated";
+    job.payload = {
+      kind: "agentTurn",
+      message,
+    };
+    job.delivery = {
+      mode: "announce",
+      channel: target.channel,
+      to: target.to,
+      ...(target.accountId ? { accountId: target.accountId } : {}),
+      ...(target.threadId !== undefined ? { threadId: target.threadId } : {}),
+      ...(target.bestEffort === true ? { bestEffort: true } : {}),
+    };
+    state.deps.log.warn(
+      { storePath: state.deps.storePath, jobId: job.id, name: job.name },
+      "cron: upgraded legacy Agentic Journal morning-pick job to isolated explicit delivery in memory",
+    );
   }
 }
 
@@ -50,6 +112,7 @@ export async function ensureLoaded(
       job.enabled = true;
     }
   }
+  upgradeLegacyAgenticJournalMorningPickJobs(state, jobs);
   state.store = {
     version: 1,
     jobs,
