@@ -13,6 +13,7 @@ const hoisted = vi.hoisted(() => ({
   dispatchReplyFromConfigMock: vi.fn(),
   finalizeInboundContextMock: vi.fn((ctx: unknown, _opts?: unknown) => ctx),
   createReplyDispatcherWithTypingMock: vi.fn(),
+  deliverContextBloatWarningMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("./reply/dispatch-from-config.js", () => ({
@@ -23,6 +24,11 @@ vi.mock("./reply/dispatch-from-config.js", () => ({
 vi.mock("./reply/inbound-context.js", () => ({
   finalizeInboundContext: (...args: Parameters<FinalizeInboundContextFn>) =>
     hoisted.finalizeInboundContextMock(...args),
+}));
+
+vi.mock("../infra/context-bloat-warning.js", () => ({
+  deliverContextBloatWarning: (...args: unknown[]) =>
+    hoisted.deliverContextBloatWarningMock(...args),
 }));
 
 vi.mock("./reply/reply-dispatcher.js", async () => {
@@ -90,6 +96,47 @@ describe("withReplyDispatcher", () => {
     });
 
     expect(order).toEqual(["sendFinalReply", "markComplete", "waitForIdle"]);
+  });
+
+  it("delivers a deferred context warning after ordinary reply delivery drains", async () => {
+    const order: string[] = [];
+    const cfg = {} as OpenClawConfig;
+    const dispatcher = {
+      ...createDispatcher(order),
+      sendFinalReply: () => {
+        order.push("sendFinalReply");
+        return true;
+      },
+    } satisfies ReplyDispatcher;
+    hoisted.deliverContextBloatWarningMock.mockImplementationOnce(async () => {
+      order.push("warning");
+    });
+    hoisted.dispatchReplyFromConfigMock.mockImplementationOnce(
+      async ({ dispatcher, replyOptions }) => {
+        dispatcher.sendFinalReply({ text: "ok" });
+        replyOptions?.onContextBloatWarning?.({
+          cfg,
+          sessionKey: "agent:main:main",
+          entry: { sessionId: "session-1", updatedAt: 1 },
+          promptTokens: 100_001,
+        });
+        return { queuedFinal: true, counts: dispatcher.getQueuedCounts() };
+      },
+    );
+
+    await dispatchInboundMessage({
+      ctx: buildTestCtx(),
+      cfg,
+      dispatcher,
+    });
+
+    expect(order).toEqual(["sendFinalReply", "markComplete", "waitForIdle", "warning"]);
+    expect(hoisted.deliverContextBloatWarningMock).toHaveBeenCalledWith({
+      cfg,
+      sessionKey: "agent:main:main",
+      entry: { sessionId: "session-1", updatedAt: 1 },
+      promptTokens: 100_001,
+    });
   });
 
   it("always marks complete and waits for idle after success", async () => {

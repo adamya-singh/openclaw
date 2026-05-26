@@ -21,6 +21,7 @@ import {
 } from "./accounts.js";
 import {
   buildTelegramCommandsListChannelData,
+  buildTelegramContextBloatWarningChannelData,
   buildTelegramModelBrowseChannelData,
   buildTelegramModelsListChannelData,
   buildTelegramModelsProviderChannelData,
@@ -152,6 +153,7 @@ export function createTelegramPluginBase(params: {
       buildModelsProviderChannelData: buildTelegramModelsProviderChannelData,
       buildModelsListChannelData: buildTelegramModelsListChannelData,
       buildModelBrowseChannelData: buildTelegramModelBrowseChannelData,
+      buildContextBloatWarningChannelData: buildTelegramContextBloatWarningChannelData,
     },
     doctor: telegramDoctor,
     reload: { configPrefixes: ["channels.telegram"] },

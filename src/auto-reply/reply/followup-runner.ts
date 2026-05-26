@@ -14,6 +14,7 @@ import type { SessionEntry } from "../../config/sessions.js";
 import type { TypingMode } from "../../config/types.js";
 import { logVerbose } from "../../globals.js";
 import { registerAgentRunContext } from "../../infra/agent-events.js";
+import { deliverContextBloatWarning } from "../../infra/context-bloat-warning.js";
 import { formatErrorMessage } from "../../infra/errors.js";
 import { defaultRuntime } from "../../runtime.js";
 import { isInternalMessageChannel } from "../../utils/message-channel.js";
@@ -283,8 +284,11 @@ export function createFollowupRunner(params: {
         sessionEntry?.contextTokens ??
         DEFAULT_CONTEXT_TOKENS;
 
+      let contextBloatWarningCandidate:
+        | Awaited<ReturnType<typeof persistRunSessionUsage>>
+        | undefined;
       if (storePath && sessionKey) {
-        await persistRunSessionUsage({
+        contextBloatWarningCandidate = await persistRunSessionUsage({
           storePath,
           sessionKey,
           cfg: queued.run.config,
@@ -303,9 +307,19 @@ export function createFollowupRunner(params: {
           logLabel: "followup",
         });
       }
+      const deliverPendingContextBloatWarning = async () => {
+        if (contextBloatWarningCandidate && sessionKey) {
+          await deliverContextBloatWarning({
+            cfg: queued.run.config,
+            sessionKey,
+            ...contextBloatWarningCandidate,
+          });
+        }
+      };
 
       const payloadArray = runResult.payloads ?? [];
       if (payloadArray.length === 0) {
+        await deliverPendingContextBloatWarning();
         return;
       }
       const sanitizedPayloads = payloadArray.flatMap((payload) => {
@@ -334,6 +348,7 @@ export function createFollowupRunner(params: {
       });
 
       if (finalPayloads.length === 0) {
+        await deliverPendingContextBloatWarning();
         return;
       }
 
@@ -372,6 +387,7 @@ export function createFollowupRunner(params: {
       }
 
       await sendFollowupPayloads(finalPayloads, queued);
+      await deliverPendingContextBloatWarning();
     } finally {
       replyOperation.complete();
       // Both signals are required for the typing controller to clean up.

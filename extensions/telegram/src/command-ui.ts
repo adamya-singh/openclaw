@@ -1,10 +1,17 @@
-import type { ReplyPayload } from "openclaw/plugin-sdk/reply-runtime";
+import type { OpenClawConfig } from "openclaw/plugin-sdk/config-runtime";
+import { buildTelegramNativeCommandCallbackData } from "./bot-native-commands.js";
+import {
+  resolveTelegramInlineButtonsScope,
+  resolveTelegramTargetChatType,
+} from "./inline-buttons.js";
 import {
   buildBrowseProvidersButton,
   buildModelsKeyboard,
   buildProviderKeyboard,
   type ProviderInfo,
 } from "./model-buttons.js";
+
+type TelegramCommandChannelData = Record<string, unknown>;
 
 export function buildCommandsPaginationKeyboard(
   currentPage: number,
@@ -40,7 +47,7 @@ export function buildTelegramCommandsListChannelData(params: {
   currentPage: number;
   totalPages: number;
   agentId?: string;
-}): ReplyPayload["channelData"] | null {
+}): TelegramCommandChannelData | null {
   if (params.totalPages <= 1) {
     return null;
   }
@@ -57,7 +64,7 @@ export function buildTelegramCommandsListChannelData(params: {
 
 export function buildTelegramModelsProviderChannelData(params: {
   providers: ProviderInfo[];
-}): ReplyPayload["channelData"] | null {
+}): TelegramCommandChannelData | null {
   if (params.providers.length === 0) {
     return null;
   }
@@ -76,7 +83,7 @@ export function buildTelegramModelsListChannelData(params: {
   totalPages: number;
   pageSize?: number;
   modelNames?: ReadonlyMap<string, string>;
-}): ReplyPayload["channelData"] | null {
+}): TelegramCommandChannelData | null {
   return {
     telegram: {
       buttons: buildModelsKeyboard(params),
@@ -84,10 +91,47 @@ export function buildTelegramModelsListChannelData(params: {
   };
 }
 
-export function buildTelegramModelBrowseChannelData(): ReplyPayload["channelData"] {
+export function buildTelegramModelBrowseChannelData(): TelegramCommandChannelData {
   return {
     telegram: {
       buttons: buildBrowseProvidersButton(),
+    },
+  };
+}
+
+export function buildTelegramContextBloatWarningChannelData(params: {
+  cfg: OpenClawConfig;
+  to: string;
+  accountId?: string | null;
+}): TelegramCommandChannelData | null {
+  const scope = resolveTelegramInlineButtonsScope({
+    cfg: params.cfg,
+    accountId: params.accountId,
+  });
+  const chatType = resolveTelegramTargetChatType(params.to);
+  if (
+    scope === "off" ||
+    (scope === "dm" && chatType !== "direct") ||
+    (scope === "group" && chatType !== "group")
+  ) {
+    return null;
+  }
+  return {
+    telegram: {
+      buttons: [
+        [
+          {
+            text: "Reset context",
+            callback_data: buildTelegramNativeCommandCallbackData("/reset"),
+            style: "danger",
+          },
+          {
+            text: "Compact context",
+            callback_data: buildTelegramNativeCommandCallbackData("/compact"),
+            style: "primary",
+          },
+        ],
+      ],
     },
   };
 }

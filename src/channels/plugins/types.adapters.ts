@@ -566,6 +566,11 @@ export type ChannelCommandAdapter = {
     modelNames?: ReadonlyMap<string, string>;
   }) => ReplyPayload["channelData"] | null;
   buildModelBrowseChannelData?: () => ReplyPayload["channelData"] | null;
+  buildContextBloatWarningChannelData?: (params: {
+    cfg: OpenClawConfig;
+    to: string;
+    accountId?: string | null;
+  }) => ReplyPayload["channelData"] | null;
 };
 
 export type ChannelDoctorConfigMutation = {

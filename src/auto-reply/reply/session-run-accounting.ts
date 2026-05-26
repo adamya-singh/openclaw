@@ -1,9 +1,19 @@
-import { deriveSessionTotalTokens, type NormalizedUsage } from "../../agents/usage.js";
+import {
+  derivePromptTokens,
+  deriveSessionTotalTokens,
+  type NormalizedUsage,
+} from "../../agents/usage.js";
 import type { OpenClawConfig } from "../../config/config.js";
+import type { SessionEntry } from "../../config/sessions/types.js";
 import { incrementCompactionCount } from "./session-updates.js";
 import { persistSessionUsageUpdate } from "./session-usage.js";
 
 type PersistRunSessionUsageParams = Parameters<typeof persistSessionUsageUpdate>[0];
+
+export type ContextBloatWarningCandidate = {
+  entry: SessionEntry;
+  promptTokens?: number;
+};
 
 type IncrementRunCompactionCountParams = Omit<
   Parameters<typeof incrementCompactionCount>[0],
@@ -16,8 +26,17 @@ type IncrementRunCompactionCountParams = Omit<
   newSessionId?: string;
 };
 
-export async function persistRunSessionUsage(params: PersistRunSessionUsageParams): Promise<void> {
-  await persistSessionUsageUpdate(params);
+export async function persistRunSessionUsage(
+  params: PersistRunSessionUsageParams,
+): Promise<ContextBloatWarningCandidate | undefined> {
+  const entry = await persistSessionUsageUpdate(params);
+  if (!entry) {
+    return undefined;
+  }
+  return {
+    entry,
+    promptTokens: params.promptTokens ?? derivePromptTokens(params.lastCallUsage),
+  };
 }
 
 export async function incrementRunCompactionCount(

@@ -1,4 +1,5 @@
 import type { OpenClawConfig } from "../config/config.js";
+import { deliverContextBloatWarning } from "../infra/context-bloat-warning.js";
 import type { DispatchFromConfigResult } from "./reply/dispatch-from-config.js";
 import { dispatchReplyFromConfig } from "./reply/dispatch-from-config.js";
 import { finalizeInboundContext } from "./reply/inbound-context.js";
@@ -10,7 +11,7 @@ import {
   type ReplyDispatcherWithTypingOptions,
 } from "./reply/reply-dispatcher.js";
 import type { FinalizedMsgContext, MsgContext } from "./templating.js";
-import type { GetReplyOptions } from "./types.js";
+import type { ContextBloatWarningNotice, GetReplyOptions } from "./types.js";
 
 export type DispatchInboundResult = DispatchFromConfigResult;
 
@@ -40,6 +41,7 @@ export async function dispatchInboundMessage(params: {
   replyResolver?: typeof import("./reply.js").getReplyFromConfig;
 }): Promise<DispatchInboundResult> {
   const finalized = finalizeInboundContext(params.ctx);
+  let contextBloatWarning: ContextBloatWarningNotice | undefined;
   return await withReplyDispatcher({
     dispatcher: params.dispatcher,
     run: () =>
@@ -47,9 +49,19 @@ export async function dispatchInboundMessage(params: {
         ctx: finalized,
         cfg: params.cfg,
         dispatcher: params.dispatcher,
-        replyOptions: params.replyOptions,
+        replyOptions: {
+          ...params.replyOptions,
+          onContextBloatWarning: (notice) => {
+            contextBloatWarning = notice;
+          },
+        },
         replyResolver: params.replyResolver,
       }),
+    onSettled: async () => {
+      if (contextBloatWarning) {
+        await deliverContextBloatWarning(contextBloatWarning);
+      }
+    },
   });
 }
 

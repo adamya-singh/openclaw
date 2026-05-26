@@ -27,6 +27,7 @@ import {
   emitAgentEvent,
   registerAgentRunContext,
 } from "../infra/agent-events.js";
+import { deliverContextBloatWarning } from "../infra/context-bloat-warning.js";
 import { formatErrorMessage } from "../infra/errors.js";
 import { buildOutboundSessionContext } from "../infra/outbound/session-context.js";
 import { getRemoteSkillEligibility } from "../infra/skills-remote.js";
@@ -87,6 +88,7 @@ import { matchesSkillFilter } from "./skills/filter.js";
 import { getSkillsSnapshotVersion, shouldRefreshSnapshotForVersion } from "./skills/refresh.js";
 import { normalizeSpawnedRunMetadata } from "./spawned-context.js";
 import { resolveAgentTimeoutMs } from "./timeout.js";
+import { derivePromptTokens } from "./usage.js";
 import { ensureAgentWorkspace } from "./workspace.js";
 
 const log = createSubsystemLogger("agents/agent-command");
@@ -947,8 +949,9 @@ async function agentCommandInternal(
     }
 
     // Update token+model fields in the session store.
+    let contextBloatWarning: Parameters<typeof deliverContextBloatWarning>[0] | undefined;
     if (sessionStore && sessionKey) {
-      await updateSessionStoreAfterAgentRun({
+      const persistedSessionEntry = await updateSessionStoreAfterAgentRun({
         cfg,
         contextTokensOverride: agentCfg?.contextTokens,
         sessionId,
@@ -961,10 +964,18 @@ async function agentCommandInternal(
         fallbackModel,
         result,
       });
+      contextBloatWarning = {
+        cfg,
+        sessionKey,
+        entry: persistedSessionEntry,
+        promptTokens:
+          result.meta.agentMeta?.promptTokens ??
+          derivePromptTokens(result.meta.agentMeta?.lastCallUsage),
+      };
     }
 
     const payloads = result.payloads ?? [];
-    return await deliverAgentCommandResult({
+    const deliveryResult = await deliverAgentCommandResult({
       cfg,
       deps,
       runtime,
@@ -974,6 +985,10 @@ async function agentCommandInternal(
       result,
       payloads,
     });
+    if (contextBloatWarning) {
+      void deliverContextBloatWarning(contextBloatWarning);
+    }
+    return deliveryResult;
   } finally {
     clearAgentRunContext(runId);
   }

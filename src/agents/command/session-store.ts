@@ -30,7 +30,7 @@ export async function updateSessionStoreAfterAgentRun(params: {
   fallbackProvider?: string;
   fallbackModel?: string;
   result: RunResult;
-}) {
+}): Promise<SessionEntry> {
   const {
     cfg,
     sessionId,
@@ -131,4 +131,5 @@ export async function updateSessionStoreAfterAgentRun(params: {
     return merged;
   });
   sessionStore[sessionKey] = persisted;
+  return persisted;
 }

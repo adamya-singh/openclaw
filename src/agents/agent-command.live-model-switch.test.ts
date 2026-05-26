@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   clearAgentRunContextMock: vi.fn(),
   updateSessionStoreAfterAgentRunMock: vi.fn(),
   deliverAgentCommandResultMock: vi.fn(),
+  deliverContextBloatWarningMock: vi.fn(),
 }));
 
 vi.mock("./model-fallback.js", () => ({
@@ -31,6 +32,10 @@ vi.mock("./command/attempt-execution.js", () => ({
 
 vi.mock("./command/delivery.js", () => ({
   deliverAgentCommandResult: (...args: unknown[]) => state.deliverAgentCommandResultMock(...args),
+}));
+
+vi.mock("../infra/context-bloat-warning.js", () => ({
+  deliverContextBloatWarning: (...args: unknown[]) => state.deliverContextBloatWarningMock(...args),
 }));
 
 vi.mock("./command/run-context.js", () => ({
@@ -295,7 +300,11 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.deliverAgentCommandResultMock.mockResolvedValue(undefined);
-    state.updateSessionStoreAfterAgentRunMock.mockResolvedValue(undefined);
+    state.deliverContextBloatWarningMock.mockResolvedValue(undefined);
+    state.updateSessionStoreAfterAgentRunMock.mockResolvedValue({
+      sessionId: "session-1",
+      updatedAt: 1,
+    });
   });
 
   afterEach(() => {
@@ -337,6 +346,38 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
       | undefined;
     expect(secondCall?.provider).toBe("openai");
     expect(secondCall?.model).toBe("gpt-5.4");
+  });
+
+  it("initiates context warning delivery only after ordinary result delivery", async () => {
+    const order: string[] = [];
+    state.runWithModelFallbackMock.mockImplementation(async (params: FallbackRunnerParams) => ({
+      result: await params.run(params.provider, params.model),
+      provider: params.provider,
+      model: params.model,
+      attempts: [],
+    }));
+    state.runAgentAttemptMock.mockResolvedValue({
+      ...makeSuccessResult("anthropic", "claude"),
+      meta: {
+        ...makeSuccessResult("anthropic", "claude").meta,
+        agentMeta: { provider: "anthropic", model: "claude", promptTokens: 100_001 },
+      },
+    });
+    state.deliverAgentCommandResultMock.mockImplementationOnce(async () => {
+      order.push("reply");
+    });
+    state.deliverContextBloatWarningMock.mockImplementationOnce(async () => {
+      order.push("warning");
+    });
+
+    const agentCommand = await getAgentCommand();
+    await agentCommand({
+      message: "hello",
+      to: "+1234567890",
+      senderIsOwner: true,
+    });
+
+    expect(order).toEqual(["reply", "warning"]);
   });
 
   it("propagates non-LiveSessionModelSwitchError errors without retrying", async () => {

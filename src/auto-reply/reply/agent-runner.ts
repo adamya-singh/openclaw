@@ -571,7 +571,7 @@ export async function runReplyAgent(params: {
       activeSessionEntry?.contextTokens ??
       DEFAULT_CONTEXT_TOKENS;
 
-    await persistRunSessionUsage({
+    const contextBloatWarningCandidate = await persistRunSessionUsage({
       storePath,
       sessionKey,
       cfg,
@@ -586,6 +586,13 @@ export async function runReplyAgent(params: {
       cliSessionBinding,
       usageIsContextSnapshot: isCliProvider(providerUsed, cfg),
     });
+    if (contextBloatWarningCandidate && sessionKey) {
+      opts?.onContextBloatWarning?.({
+        cfg,
+        sessionKey,
+        ...contextBloatWarningCandidate,
+      });
+    }
 
     // Drain any late tool/block deliveries before deciding there's "nothing to send".
     // Otherwise, a late typing trigger (e.g. from a tool callback) can outlive the run and

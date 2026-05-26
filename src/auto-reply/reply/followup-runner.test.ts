@@ -10,6 +10,7 @@ const compactEmbeddedPiSessionMock = vi.fn();
 const routeReplyMock = vi.fn();
 const isRoutableChannelMock = vi.fn();
 const runPreflightCompactionIfNeededMock = vi.fn();
+const deliverContextBloatWarningMock = vi.fn(async () => undefined);
 const FOLLOWUP_DEBUG = process.env.OPENCLAW_DEBUG_FOLLOWUP_RUNNER_TEST === "1";
 const FOLLOWUP_TEST_QUEUES = new Map<
   string,
@@ -183,16 +184,16 @@ function refreshQueuedFollowupSessionForFollowupTest(params: {
 
 async function persistRunSessionUsageForFollowupTest(
   params: Parameters<typeof import("./session-run-accounting.js").persistRunSessionUsage>[0],
-): Promise<void> {
+): ReturnType<typeof import("./session-run-accounting.js").persistRunSessionUsage> {
   const { storePath, sessionKey } = params;
   if (!storePath || !sessionKey) {
-    return;
+    return undefined;
   }
   const registeredStore = FOLLOWUP_TEST_SESSION_STORES.get(storePath);
   const store = registeredStore ?? loadSessionStore(storePath, { skipCache: true });
   const entry = store[sessionKey];
   if (!entry) {
-    return;
+    return undefined;
   }
   const nextEntry: SessionEntry = {
     ...entry,
@@ -217,10 +218,10 @@ async function persistRunSessionUsageForFollowupTest(
   nextEntry.totalTokens = promptTokens > 0 ? promptTokens : undefined;
   nextEntry.totalTokensFresh = promptTokens > 0;
   store[sessionKey] = nextEntry;
-  if (registeredStore) {
-    return;
+  if (!registeredStore) {
+    await saveSessionStore(storePath, store);
   }
-  await saveSessionStore(storePath, store);
+  return { entry: nextEntry, promptTokens };
 }
 
 vi.mock(
@@ -260,6 +261,9 @@ vi.mock("./route-reply.js", () => ({
   isRoutableChannel: (...args: unknown[]) => isRoutableChannelMock(...args),
   routeReply: (...args: unknown[]) => routeReplyMock(...args),
 }));
+vi.mock("../../infra/context-bloat-warning.js", () => ({
+  deliverContextBloatWarning: (...args: unknown[]) => deliverContextBloatWarningMock(...args),
+}));
 
 const { createFollowupRunner } = await import("./followup-runner.js");
 const { loadSessionStore, saveSessionStore, clearSessionStoreCacheForTest } =
@@ -291,6 +295,7 @@ beforeEach(async () => {
   isRoutableChannelMock.mockImplementation((ch: string | undefined) =>
     Boolean(ch?.trim() && ROUTABLE_TEST_CHANNELS.has(ch.trim().toLowerCase())),
   );
+  deliverContextBloatWarningMock.mockReset().mockResolvedValue(undefined);
   clearFollowupQueue("main");
   FOLLOWUP_TEST_QUEUES.clear();
   FOLLOWUP_TEST_SESSION_STORES.clear();
@@ -847,6 +852,7 @@ describe("createFollowupRunner messaging tool dedupe", () => {
       };
       sessionStore[sessionKey] = nextEntry;
       Object.assign(sessionEntry, nextEntry);
+      return undefined;
     });
 
     const { onBlockReply } = await runMessagingCase({
@@ -940,6 +946,48 @@ describe("createFollowupRunner messaging tool dedupe", () => {
       }),
     );
     persistSpy.mockRestore();
+  });
+
+  it("delivers a pending context warning after the followup reply", async () => {
+    const storePath = "/tmp/openclaw-followup-warning.json";
+    const sessionKey = "main";
+    const sessionEntry: SessionEntry = { sessionId: "session", updatedAt: Date.now() };
+    const sessionStore: Record<string, SessionEntry> = { [sessionKey]: sessionEntry };
+    registerFollowupTestSessionStore(storePath, sessionStore);
+    const order: string[] = [];
+    deliverContextBloatWarningMock.mockImplementationOnce(async () => {
+      order.push("warning");
+    });
+    runEmbeddedPiAgentMock.mockResolvedValueOnce({
+      payloads: [{ text: "hello world!" }],
+      meta: {
+        agentMeta: {
+          promptTokens: 100_001,
+          model: "claude-opus-4-6",
+        },
+      },
+    });
+    const runner = createFollowupRunner({
+      opts: {
+        onBlockReply: async () => {
+          order.push("reply");
+        },
+      },
+      typing: createMockTypingController(),
+      typingMode: "instant",
+      defaultModel: "anthropic/claude-opus-4-6",
+      sessionEntry,
+      sessionStore,
+      sessionKey,
+      storePath,
+    });
+
+    await runner(baseQueuedRun());
+
+    expect(order).toEqual(["reply", "warning"]);
+    expect(deliverContextBloatWarningMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey, promptTokens: 100_001 }),
+    );
   });
 
   it("does not fall back to dispatcher when cross-channel origin routing fails", async () => {
