@@ -91,9 +91,13 @@ const CORE_GATEWAY_METHOD_SPECS = [
   ["openclaw.changes.list", "system-changes", "operator.admin", "<=2026.7"],
   ["openclaw.approval.list", "system-agent", "operator.approvals", "<=2026.7"],
   ["openclaw.setup.detect", "system-agent", "operator.admin", "<=2026.7"],
+  // The stable 2026.7.1 macOS app still calls the pre-rename setup methods.
+  // Remove these aliases when the minimum supported macOS client is newer than 2026.7.1.
+  ["crestodian.setup.detect", "system-agent", "operator.admin", "<=2026.7", { advertise: false }],
   // Failed activation candidates are non-mutating probes. Keep this admin-only
   // without the shared three-write budget so the automatic ladder can finish.
   ["openclaw.setup.activate", "system-agent", "operator.admin", "<=2026.7"],
+  ["crestodian.setup.activate", "system-agent", "operator.admin", "<=2026.7", { advertise: false }],
   ["openclaw.setup.auth.start", "system-agent", "operator.admin", "<=2026.7"],
   ["openclaw.setup.prepare.start", "system-agent", "operator.admin", "<=2026.7"],
   ["wizard.start", "wizard", "operator.admin", "<=2026.7"],

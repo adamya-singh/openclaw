@@ -264,6 +264,70 @@ function queueDelegatedApproval(params: {
   return record.id;
 }
 
+const handleSetupDetect: GatewayRequestHandlers[string] = async ({ params, respond }) => {
+  if (
+    !assertValidParams(
+      params,
+      validateSystemAgentSetupDetectParams,
+      "openclaw.setup.detect",
+      respond,
+    )
+  ) {
+    return;
+  }
+  // Keep read-only detection off the mutation lane and Gateway event loop.
+  const { detectSetupInferenceIsolated } =
+    await import("../../system-agent/setup-inference-detection.js");
+  respond(true, await detectSetupInferenceIsolated(), undefined);
+};
+
+const handleSetupActivate: GatewayRequestHandlers[string] = async ({ params, respond }) => {
+  if (
+    !assertValidParams(
+      params,
+      validateSystemAgentSetupActivateParams,
+      "openclaw.setup.activate",
+      respond,
+    )
+  ) {
+    return;
+  }
+  try {
+    await runExclusiveSystemAgentSetupActivation(async () => {
+      await runSystemAgentGatewayTask(async () => {
+        const { activateSetupInference } = await import("../../system-agent/setup-inference.js");
+        const runtime = {
+          ...defaultRuntime,
+          // Setup runs inside the gateway process; a failing sub-step must reject
+          // the RPC, never exit the daemon.
+          exit: (code: number | undefined): never => {
+            throw new Error(`setup step exited with code ${String(code)}`);
+          },
+        };
+        const result = await activateSetupInference({
+          kind: params.kind,
+          ...(params.modelRef !== undefined ? { modelRef: params.modelRef } : {}),
+          ...(params.authChoice !== undefined ? { authChoice: params.authChoice } : {}),
+          ...(params.apiKey !== undefined ? { apiKey: params.apiKey } : {}),
+          ...(params.workspace !== undefined ? { workspace: params.workspace } : {}),
+          surface: "gateway",
+          runtime,
+        });
+        respond(true, result, undefined);
+      });
+    });
+  } catch (error) {
+    if (!(error instanceof SystemAgentSetupActivationBusyError)) {
+      throw error;
+    }
+    respond(
+      false,
+      undefined,
+      errorShape(ErrorCodes.UNAVAILABLE, error.message, { retryable: true }),
+    );
+  }
+};
+
 export const systemAgentHandlers: GatewayRequestHandlers = {
   "openclaw.approval.list": async ({ respond, client, context }) => {
     const manager = context.systemAgentApprovalManager;
@@ -291,23 +355,8 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
     );
   },
   /** Structured onboarding: list reusable AI access on this host. */
-  "openclaw.setup.detect": async ({ params, respond }) => {
-    if (
-      !assertValidParams(
-        params,
-        validateSystemAgentSetupDetectParams,
-        "openclaw.setup.detect",
-        respond,
-      )
-    ) {
-      return;
-    }
-    // Detection is read-only and may load native provider code. Keep it outside
-    // the mutation lane and off the Gateway event loop so health stays live.
-    const { detectSetupInferenceIsolated } =
-      await import("../../system-agent/setup-inference-detection.js");
-    respond(true, await detectSetupInferenceIsolated(), undefined);
-  },
+  "openclaw.setup.detect": handleSetupDetect,
+  "crestodian.setup.detect": handleSetupDetect,
   /** Re-run the exact current default-agent inference route without mutating setup. */
   "openclaw.setup.verify": async ({ params, respond }) => {
     if (
@@ -460,52 +509,8 @@ export const systemAgentHandlers: GatewayRequestHandlers = {
    * queueing work that could outlive their RPC timeout. A failed attempt never
    * commits a broken model, managed plugin install, or setup state.
    */
-  "openclaw.setup.activate": async ({ params, respond }) => {
-    if (
-      !assertValidParams(
-        params,
-        validateSystemAgentSetupActivateParams,
-        "openclaw.setup.activate",
-        respond,
-      )
-    ) {
-      return;
-    }
-    try {
-      await runExclusiveSystemAgentSetupActivation(async () => {
-        await runSystemAgentGatewayTask(async () => {
-          const { activateSetupInference } = await import("../../system-agent/setup-inference.js");
-          const runtime = {
-            ...defaultRuntime,
-            // Setup runs inside the gateway process; a failing sub-step must reject
-            // the RPC, never exit the daemon.
-            exit: (code: number | undefined): never => {
-              throw new Error(`setup step exited with code ${String(code)}`);
-            },
-          };
-          const result = await activateSetupInference({
-            kind: params.kind,
-            ...(params.modelRef !== undefined ? { modelRef: params.modelRef } : {}),
-            ...(params.authChoice !== undefined ? { authChoice: params.authChoice } : {}),
-            ...(params.apiKey !== undefined ? { apiKey: params.apiKey } : {}),
-            ...(params.workspace !== undefined ? { workspace: params.workspace } : {}),
-            surface: "gateway",
-            runtime,
-          });
-          respond(true, result, undefined);
-        });
-      });
-    } catch (error) {
-      if (!(error instanceof SystemAgentSetupActivationBusyError)) {
-        throw error;
-      }
-      respond(
-        false,
-        undefined,
-        errorShape(ErrorCodes.UNAVAILABLE, error.message, { retryable: true }),
-      );
-    }
-  },
+  "openclaw.setup.activate": handleSetupActivate,
+  "crestodian.setup.activate": handleSetupActivate,
   "openclaw.chat": async ({ params: rawParams, respond, client, context }) => {
     const params = sanitizeSystemAgentChatParams(rawParams);
     if (!assertValidParams(params, validateSystemAgentChatParams, "openclaw.chat", respond)) {

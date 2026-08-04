@@ -549,6 +549,15 @@ describe("openclaw.chat", () => {
     expect(systemAgentLane().activeCount).toBe(0);
   });
 
+  it("routes the 2026.7.1 macOS setup aliases through the current handlers", () => {
+    expect(systemAgentHandlers["crestodian.setup.detect"]).toBe(
+      systemAgentHandlers["openclaw.setup.detect"],
+    );
+    expect(systemAgentHandlers["crestodian.setup.activate"]).toBe(
+      systemAgentHandlers["openclaw.setup.activate"],
+    );
+  });
+
   it.each([
     {
       name: "working",

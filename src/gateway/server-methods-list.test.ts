@@ -266,4 +266,19 @@ describe("listGatewayMethods", () => {
       .filter((method) => typeof coreGatewayHandlers[method] !== "function");
     expect(missing).toEqual([]);
   });
+
+  it("keeps the 2026.7.1 macOS setup aliases dispatchable but hidden", () => {
+    const advertised = listGatewayMethods();
+    const descriptors = createCoreGatewayMethodDescriptors(coreGatewayHandlers);
+
+    for (const method of ["crestodian.setup.detect", "crestodian.setup.activate"]) {
+      expect(advertised).not.toContain(method);
+      expect(coreGatewayHandlers[method]).toBeTypeOf("function");
+      expect(descriptors.find((descriptor) => descriptor.name === method)).toMatchObject({
+        name: method,
+        scope: "operator.admin",
+        advertise: false,
+      });
+    }
+  });
 });
