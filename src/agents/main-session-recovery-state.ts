@@ -148,27 +148,57 @@ export function isMainSessionRecoveryPending(entry: SessionEntry, sessionKey: st
   );
 }
 
+// Claims, reservations, and run fences are process-local: none of them can
+// outlive the Gateway generation that recorded them. Residue owned only by a
+// dead generation has no one left to settle it.
+function hasLiveMainRestartRecoveryOwner(
+  entry: SessionEntry,
+  state: MainRestartRecoveryState | undefined,
+  lifecycleGeneration: string,
+): boolean {
+  return (
+    state?.foregroundClaims?.lifecycleGeneration === lifecycleGeneration ||
+    state?.reservation?.lifecycleGeneration === lifecycleGeneration ||
+    (entry.restartRecoveryRuns?.some((run) => run.lifecycleGeneration === lifecycleGeneration) ??
+      false)
+  );
+}
+
 // A healthy session can retain lifecycle fences after its final recovery owner
 // clears. With no active delivery or aggregate, those fences no longer own work.
-function hasOrphanedMainRestartRecoveryFences(entry: SessionEntry, sessionKey: string): boolean {
-  return (
-    (entry.status === "running" &&
-      entry.abortedLastRun !== true &&
-      entry.restartRecoveryRuns !== undefined &&
-      entry.mainRestartRecovery === undefined &&
-      entry.restartRecoveryDeliveryRunId === undefined &&
-      isMainRestartRecoveryCandidate(entry, sessionKey)) ||
+function hasOrphanedMainRestartRecoveryFences(
+  entry: SessionEntry,
+  sessionKey: string,
+  lifecycleGeneration: string,
+): boolean {
+  const state = entry.mainRestartRecovery;
+  if (!isMainRestartRecoveryCandidate(entry, sessionKey) || state?.tombstone) {
+    // A tombstone is a deliberate terminal decision. Only doctor or an explicit
+    // reset may retire it, never an incidental admission-time cleanup.
+    return false;
+  }
+  if (entry.status !== "running") {
     // Sessions that are not running were permanently unadmittable while holding
     // recovery residue, returning "changed while starting work" forever
     // (production incident 2026-07-26). A row whose status is absent never
     // reached an active run either, so it carries residue the same way a
     // terminal row does. A pending delivery claim may coexist with the residue,
-    // so it must not gate the cleanup the way it does for the running case above.
-    (entry.status !== "running" &&
-      entry.mainRestartRecovery === undefined &&
-      isMainRestartRecoveryCandidate(entry, sessionKey) &&
-      (entry.restartRecoveryRuns !== undefined || entry.abortedLastRun === true))
-  );
+    // so it must not gate the cleanup the way it does for the running case below.
+    return (
+      state === undefined &&
+      (entry.restartRecoveryRuns !== undefined || entry.abortedLastRun === true)
+    );
+  }
+  if (entry.abortedLastRun === true || entry.restartRecoveryRuns === undefined) {
+    return false;
+  }
+  // `admit_recovery` clears abortedLastRun before its run settles, so a running
+  // row legitimately carries residue while that owner is alive. Once no owner
+  // from this generation remains, the resumed run died with its process and the
+  // residue is unreachable: without this, claim_foreground answers `no_change`
+  // and every later turn is rejected as "changed while starting work" forever.
+  // The delivery claim is fenced by the same run id, so it cannot outlive it.
+  return !hasLiveMainRestartRecoveryOwner(entry, state, lifecycleGeneration);
 }
 
 function inspectMainSessionRecovery(params: {
@@ -450,7 +480,7 @@ export function transitionMainSessionRecovery(
     case "claim_foreground": {
       if (
         entry.sessionId === command.sessionId &&
-        hasOrphanedMainRestartRecoveryFences(entry, command.sessionKey)
+        hasOrphanedMainRestartRecoveryFences(entry, command.sessionKey, command.lifecycleGeneration)
       ) {
         Object.assign(entry, buildMainSessionRecoveryClearPatch(entry));
         return { kind: "applied" };

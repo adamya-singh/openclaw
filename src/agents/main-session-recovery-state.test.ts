@@ -240,6 +240,52 @@ describe("main session recovery state", () => {
     expect(entry.mainRestartRecovery).toBeUndefined();
   });
 
+  it("clears running recovery residue owned only by a dead gateway generation", () => {
+    // Production shape (2026-08-06): admit_recovery cleared abortedLastRun, then the
+    // resumed run died with its Gateway process, stranding the cycle and its fence on
+    // a generation that can never settle them. claim_foreground answered `no_change`,
+    // which admission maps to "changed while starting work", so every later turn on
+    // every channel was rejected until the session was reset by hand.
+    const entry = interruptedEntry({
+      abortedLastRun: false,
+      mainRestartRecovery: recoveryState({ revision: 3, chargedAttempts: 1 }),
+      restartRecoveryRuns: [{ runId: "dead-run", lifecycleGeneration: "dead-generation" }],
+      restartRecoveryDeliveryRunId: "dead-run",
+    });
+
+    expect(claimForeground(entry)).toEqual({ kind: "applied" });
+    expect(entry).toMatchObject({ status: "running", abortedLastRun: false });
+    expect(entry.restartRecoveryRuns).toBeUndefined();
+    expect(entry.mainRestartRecovery).toBeUndefined();
+  });
+
+  it("keeps running recovery residue authoritative while this generation still owns it", () => {
+    const entry = interruptedEntry({
+      abortedLastRun: false,
+      mainRestartRecovery: recoveryState({ revision: 3, chargedAttempts: 1 }),
+      restartRecoveryRuns: [{ runId: "live-run", lifecycleGeneration: "generation-1" }],
+    });
+
+    expect(claimForeground(entry)).toEqual({ kind: "no_change" });
+    expect(entry.mainRestartRecovery).toMatchObject({ revision: 3 });
+    expect(entry.restartRecoveryRuns).toEqual([
+      { runId: "live-run", lifecycleGeneration: "generation-1" },
+    ]);
+  });
+
+  it("never retires a tombstoned cycle as orphaned residue", () => {
+    const entry = interruptedEntry({
+      abortedLastRun: false,
+      mainRestartRecovery: recoveryState({
+        tombstone: { reason: "automatic recovery exhausted" },
+      }),
+      restartRecoveryRuns: [{ runId: "dead-run", lifecycleGeneration: "dead-generation" }],
+    });
+
+    expect(claimForeground(entry)).toEqual({ kind: "no_change" });
+    expect(entry.mainRestartRecovery?.tombstone).toBeDefined();
+  });
+
   it("clears orphaned recovery residue when the row never recorded a status", () => {
     // Production shape (2026-07-26): fences from two dead gateway generations on
     // a row whose status was never persisted, so it matched no cleanup branch.
