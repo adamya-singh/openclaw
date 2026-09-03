@@ -54,6 +54,8 @@ import {
 import {
   isGoogleVertexCredentialsMarker,
   resolveGoogleVertexAuthorizedUserHeaders,
+  resolveGoogleVertexLocationEnv,
+  resolveGoogleVertexProjectEnv,
 } from "./vertex-adc.js";
 
 type CanonicalGoogleTransportApi = "google-generative-ai" | "google-vertex";
@@ -354,8 +356,7 @@ function buildGoogleGenerativeAiRequestUrl(model: GoogleTransportModel): string 
 function resolveGoogleVertexProject(options: GoogleTransportOptions | undefined): string {
   const project =
     normalizeOptionalString((options as { project?: unknown } | undefined)?.project) ||
-    normalizeOptionalString(process.env.GOOGLE_CLOUD_PROJECT) ||
-    normalizeOptionalString(process.env.GCLOUD_PROJECT);
+    resolveGoogleVertexProjectEnv(process.env);
   if (!project) {
     throw new Error(
       "Vertex AI requires a project ID. Set GOOGLE_CLOUD_PROJECT/GCLOUD_PROJECT or pass project in options.",
@@ -367,7 +368,7 @@ function resolveGoogleVertexProject(options: GoogleTransportOptions | undefined)
 function resolveGoogleVertexLocation(options: GoogleTransportOptions | undefined): string {
   const location =
     normalizeOptionalString((options as { location?: unknown } | undefined)?.location) ||
-    normalizeOptionalString(process.env.GOOGLE_CLOUD_LOCATION);
+    resolveGoogleVertexLocationEnv(process.env);
   if (!location) {
     throw new Error(
       "Vertex AI requires a location. Set GOOGLE_CLOUD_LOCATION or pass location in options.",

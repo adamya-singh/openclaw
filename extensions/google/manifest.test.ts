@@ -44,6 +44,7 @@ type GoogleManifest = {
   };
   contracts?: {
     usageProviders?: string[];
+    realtimeVoiceProviders?: string[];
   };
   uiHints?: Record<string, { sensitive?: boolean }>;
 };
@@ -93,6 +94,12 @@ const GOOGLE_CHAT_PROVIDERS = ["google", "google-gemini-cli", "google-vertex"] a
 function loadManifest(): GoogleManifest {
   return JSON.parse(readFileSync(new URL("./openclaw.plugin.json", import.meta.url), "utf8"));
 }
+
+describe("google manifest realtime voice", () => {
+  it("declares Gemini API and Vertex realtime voice provider ids", () => {
+    expect(loadManifest().contracts?.realtimeVoiceProviders).toEqual(["google", "google-vertex"]);
+  });
+});
 
 describe("google manifest model catalog", () => {
   it("checks relocated Cloud SDK ADC before platform-specific fallback paths", () => {

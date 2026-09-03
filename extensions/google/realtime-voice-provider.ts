@@ -18,6 +18,7 @@ import {
   type ThinkingConfig,
   TurnCoverage,
 } from "@google/genai";
+import { AuthClient } from "google-auth-library";
 import { canonicalizeBase64 } from "openclaw/plugin-sdk/media-runtime";
 import {
   resolveExpiresAtMsFromDurationMs,
@@ -53,11 +54,38 @@ import {
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { createGoogleGenAI } from "./google-genai-runtime.js";
+import {
+  GOOGLE_REALTIME_VOICE_PROVIDERS,
+  type GoogleRealtimeVoiceTarget,
+} from "./realtime-voice-provider-metadata.js";
 import { resolveGoogleGemini3ThinkingLevel } from "./thinking.js";
+import {
+  type GoogleVertexTarget,
+  hasGoogleVertexAdcTarget,
+  resolveGoogleVertexAuthorizedUserHeaders,
+  resolveGoogleVertexTarget,
+} from "./vertex-adc.js";
 
-const GOOGLE_REALTIME_DEFAULT_MODEL = "gemini-3.1-flash-live-preview";
+// The SDK's default ADC client mints tokens through whatever google-auth-library
+// it resolves at runtime; the plugin already owns Vertex tokens for the chat
+// transport (cached, quota-project aware, bundled with the plugin). Injecting
+// this client keeps one token owner and lets the SDK only frame the socket.
+class GoogleVertexPluginAuthClient extends AuthClient {
+  async getRequestHeaders(): Promise<Headers> {
+    return new Headers(await resolveGoogleVertexAuthorizedUserHeaders());
+  }
+
+  async getAccessToken(): Promise<{ token?: string | null }> {
+    const authorization = (await this.getRequestHeaders()).get("authorization");
+    return { token: authorization?.replace(/^Bearer\s+/i, "") ?? null };
+  }
+
+  async request(): Promise<never> {
+    throw new Error("Google Vertex realtime auth client does not issue HTTP requests");
+  }
+}
+
 const GOOGLE_REALTIME_DEFAULT_VOICE = "Kore";
-const GOOGLE_REALTIME_DEFAULT_API_VERSION = "v1beta";
 const GOOGLE_REALTIME_INPUT_SAMPLE_RATE = 16_000;
 const GOOGLE_REALTIME_BROWSER_API_VERSION = "v1alpha";
 const GOOGLE_REALTIME_BROWSER_WEBSOCKET_URL =
@@ -107,6 +135,8 @@ const TURN_COVERAGE = {
 
 type GoogleRealtimeVoiceProviderConfig = {
   apiKey?: string;
+  project?: string;
+  location?: string;
   model?: string;
   voice?: string;
   temperature?: number;
@@ -125,8 +155,12 @@ type GoogleRealtimeVoiceProviderConfig = {
   thinkingBudget?: number;
 };
 
+// The SDK throws when project/location and an API key are both present, so the
+// bridge carries exactly one credential shape instead of parallel optional fields.
+type GoogleRealtimeLiveAuth = { apiKey: string } | { vertex: GoogleVertexTarget };
+
 type GoogleRealtimeLiveConfig = {
-  apiKey: string;
+  auth: GoogleRealtimeLiveAuth;
   instructions?: string;
   tools?: RealtimeVoiceTool[];
   model?: string;
@@ -223,6 +257,7 @@ function asGoogleRealtimeThinkingBudget(value: unknown): number | undefined {
 
 function resolveGoogleRealtimeProviderConfigRecord(
   config: Record<string, unknown>,
+  providerId: string,
 ): Record<string, unknown> | undefined {
   const providers =
     typeof config.providers === "object" &&
@@ -230,24 +265,35 @@ function resolveGoogleRealtimeProviderConfigRecord(
     !Array.isArray(config.providers)
       ? (config.providers as Record<string, unknown>)
       : undefined;
-  const nested = providers?.google;
+  const nested = providers?.[providerId];
+  const legacy = config[providerId];
   return typeof nested === "object" && nested !== null && !Array.isArray(nested)
     ? (nested as Record<string, unknown>)
-    : typeof config.google === "object" && config.google !== null && !Array.isArray(config.google)
-      ? (config.google as Record<string, unknown>)
+    : typeof legacy === "object" && legacy !== null && !Array.isArray(legacy)
+      ? (legacy as Record<string, unknown>)
       : config;
 }
 
 function normalizeProviderConfig(
   config: RealtimeVoiceProviderConfig,
   cfg?: OpenClawConfig,
+  target: GoogleRealtimeVoiceTarget = "gemini-api",
 ): GoogleRealtimeVoiceProviderConfig {
-  const raw = resolveGoogleRealtimeProviderConfigRecord(config);
+  const raw = resolveGoogleRealtimeProviderConfigRecord(
+    config,
+    GOOGLE_REALTIME_VOICE_PROVIDERS[target].id,
+  );
   return {
-    apiKey: normalizeResolvedSecretInputString({
-      value: raw?.apiKey ?? cfg?.models?.providers?.google?.apiKey,
-      path: "plugins.entries.voice-call.config.realtime.providers.google.apiKey",
-    }),
+    // Vertex authenticates with ADC only; a stray key must never reach the SDK.
+    apiKey:
+      target === "vertex"
+        ? undefined
+        : normalizeResolvedSecretInputString({
+            value: raw?.apiKey ?? cfg?.models?.providers?.google?.apiKey,
+            path: "plugins.entries.voice-call.config.realtime.providers.google.apiKey",
+          }),
+    project: trimToUndefined(raw?.project),
+    location: trimToUndefined(raw?.location),
     model: trimToUndefined(raw?.model),
     voice: trimToUndefined(raw?.speakerVoice) ?? trimToUndefined(raw?.voice),
     temperature: asFiniteNumber(raw?.temperature),
@@ -509,9 +555,12 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
       assistant: { text: "", byteCount: 0 },
     };
 
+  private readonly target: GoogleRealtimeVoiceTarget;
+
   constructor(private readonly config: GoogleRealtimeVoiceBridgeConfig) {
+    this.target = "vertex" in config.auth ? "vertex" : "gemini-api";
     this.audioFormat = config.audioFormat ?? REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ;
-    this.model = config.model ?? GOOGLE_REALTIME_DEFAULT_MODEL;
+    this.model = config.model ?? GOOGLE_REALTIME_VOICE_PROVIDERS[this.target].defaultModel;
     this.supportsToolResultContinuation = supportsAsyncFunctionCalling(this.model);
   }
 
@@ -558,10 +607,21 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
     if (!resumesExistingSession) {
       this.resetToolCallOwnership();
     }
+    // Explicit project/location select the SDK's Vertex ADC path and make it
+    // ignore any GEMINI_API_KEY in the environment; the model id stays bare so
+    // the SDK expands it to the projects/.../publishers/google/models resource.
     const ai = createGoogleGenAI({
-      apiKey: this.config.apiKey,
+      ...("vertex" in this.config.auth
+        ? {
+            vertexai: true,
+            project: this.config.auth.vertex.project,
+            location: this.config.auth.vertex.location,
+            googleAuthOptions: { authClient: new GoogleVertexPluginAuthClient() },
+          }
+        : { apiKey: this.config.auth.apiKey }),
       httpOptions: {
-        apiVersion: this.config.apiVersion ?? GOOGLE_REALTIME_DEFAULT_API_VERSION,
+        apiVersion:
+          this.config.apiVersion ?? GOOGLE_REALTIME_VOICE_PROVIDERS[this.target].apiVersion,
       },
     });
 
@@ -1274,7 +1334,8 @@ async function createGoogleRealtimeBrowserSession(
   if (!apiKey) {
     throw new Error("Google Gemini API key missing");
   }
-  const model = req.model ?? config.model ?? GOOGLE_REALTIME_DEFAULT_MODEL;
+  const model =
+    req.model ?? config.model ?? GOOGLE_REALTIME_VOICE_PROVIDERS["gemini-api"].defaultModel;
   const voice = req.voice ?? config.voice ?? GOOGLE_REALTIME_DEFAULT_VOICE;
   const nowMs = Date.now();
   const expiresAtMs = resolveExpiresAtMsFromDurationMs(GOOGLE_REALTIME_BROWSER_SESSION_TTL_MS, {
@@ -1306,7 +1367,7 @@ async function createGoogleRealtimeBrowserSession(
         config: buildGoogleLiveConnectConfig(
           {
             ...config,
-            apiKey,
+            auth: { apiKey },
             model,
             voice,
             instructions: req.instructions,
@@ -1341,14 +1402,51 @@ async function createGoogleRealtimeBrowserSession(
   };
 }
 
-export function buildGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
+function resolveGoogleRealtimeLiveAuth(
+  config: GoogleRealtimeVoiceProviderConfig,
+  target: GoogleRealtimeVoiceTarget,
+): GoogleRealtimeLiveAuth {
+  if (target === "vertex") {
+    const vertex = resolveGoogleVertexTarget(config);
+    if (!vertex) {
+      throw new Error(
+        "Google Vertex realtime voice requires a project (GOOGLE_CLOUD_PROJECT or GCLOUD_PROJECT), " +
+          "a location (talk.realtime.providers.google-vertex.location or GOOGLE_CLOUD_LOCATION), " +
+          "and Application Default Credentials",
+      );
+    }
+    if (vertex.location === "global") {
+      // Observed: the global Live endpoint never completes setup, and the bridge
+      // has no setup timeout, so an operator would see a silent non-answer.
+      warn(
+        "google realtime: Gemini Live on Vertex AI did not answer on the global location in testing; " +
+          "set a regional location such as us-central1 under talk.realtime.providers.google-vertex.location",
+      );
+    }
+    return { vertex };
+  }
+  const apiKey = config.apiKey || resolveEnvApiKey();
+  if (!apiKey) {
+    throw new Error("Google Gemini API key missing");
+  }
+  return { apiKey };
+}
+
+export function buildGoogleRealtimeVoiceProvider(
+  options: { target?: GoogleRealtimeVoiceTarget } = {},
+): RealtimeVoiceProviderPlugin {
+  const target = options.target ?? "gemini-api";
+  const meta = GOOGLE_REALTIME_VOICE_PROVIDERS[target];
+  // Vertex has no ephemeral browser tokens, so its sessions stay Gateway-owned
+  // and browser camera frames (client-owned only) are unavailable.
+  const isVertex = target === "vertex";
   return {
-    id: "google",
-    label: "Google Live Voice",
-    defaultModel: GOOGLE_REALTIME_DEFAULT_MODEL,
+    id: meta.id,
+    label: meta.label,
+    defaultModel: meta.defaultModel,
     autoSelectOrder: 20,
     capabilities: {
-      transports: ["provider-websocket", "gateway-relay"],
+      transports: isVertex ? ["gateway-relay"] : ["provider-websocket", "gateway-relay"],
       inputAudioFormats: [
         REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
         REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
@@ -1357,25 +1455,25 @@ export function buildGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin 
         REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ,
         REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
       ],
-      supportsBrowserSession: true,
+      supportsBrowserSession: !isVertex,
       supportsBargeIn: true,
       handlesInputAudioBargeIn: true,
       supportsToolCalls: true,
-      supportsVideoFrames: true,
+      supportsVideoFrames: !isVertex,
       supportsSessionResumption: true,
     },
-    resolveConfig: ({ cfg, rawConfig }) => normalizeProviderConfig(rawConfig, cfg),
-    isConfigured: ({ providerConfig }) =>
-      Boolean(normalizeProviderConfig(providerConfig).apiKey || resolveEnvApiKey()),
+    resolveConfig: ({ cfg, rawConfig }) => normalizeProviderConfig(rawConfig, cfg, target),
+    isConfigured: ({ providerConfig }) => {
+      const config = normalizeProviderConfig(providerConfig, undefined, target);
+      return isVertex
+        ? hasGoogleVertexAdcTarget(config)
+        : Boolean(config.apiKey || resolveEnvApiKey());
+    },
     createBridge: (req) => {
-      const config = normalizeProviderConfig(req.providerConfig);
-      const apiKey = config.apiKey || resolveEnvApiKey();
-      if (!apiKey) {
-        throw new Error("Google Gemini API key missing");
-      }
+      const config = normalizeProviderConfig(req.providerConfig, undefined, target);
       return new GoogleRealtimeVoiceBridge({
         ...req,
-        apiKey,
+        auth: resolveGoogleRealtimeLiveAuth(config, target),
         model: config.model,
         voice: config.voice,
         temperature: config.temperature,
@@ -1394,7 +1492,7 @@ export function buildGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin 
         thinkingBudget: config.thinkingBudget,
       });
     },
-    createBrowserSession: createGoogleRealtimeBrowserSession,
+    ...(isVertex ? {} : { createBrowserSession: createGoogleRealtimeBrowserSession }),
   };
 }
 /* oxlint-disable max-lines -- TODO: split this grandfathered oversized file. */

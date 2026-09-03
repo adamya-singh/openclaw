@@ -259,7 +259,7 @@ Current runtime behavior:
 
 - `realtime.enabled` is supported for Twilio and Telnyx.
 - `realtime.provider` is optional. If unset, Voice Call uses the first registered realtime voice provider.
-- Bundled realtime voice providers: Google Gemini Live (`google`) and OpenAI (`openai`), registered by their provider plugins.
+- Bundled realtime voice providers: Google Gemini Live (`google`), Google Gemini Live on Vertex AI (`google-vertex`, Application Default Credentials), and OpenAI (`openai`), registered by their provider plugins.
 - Provider-owned raw config lives under `realtime.providers.<providerId>`.
 - Voice Call exposes the shared `openclaw_agent_consult` realtime tool by default. The realtime model can call it when the caller asks for deeper reasoning, current information, or normal OpenClaw tools.
 - `realtime.consultPolicy` optionally adds guidance for when the realtime model should call `openclaw_agent_consult`.
@@ -332,7 +332,10 @@ for tool work, current information, memory lookups, or workspace state.
     voice `Kore`. `sessionResumption` and `contextWindowCompression` default on
     for longer, reconnectable calls. Use `silenceDurationMs`,
     `startSensitivity`, and `endSensitivity` to tune faster turn-taking on
-    telephony audio.
+    telephony audio. Gateways on Vertex AI use `provider: "google-vertex"`
+    with `realtime.providers.google-vertex.{project,location}` (defaulting to
+    `GOOGLE_CLOUD_PROJECT`/`GCLOUD_PROJECT` and `GOOGLE_CLOUD_LOCATION`) and
+    the `gemini-live-2.5-flash-native-audio` model instead of an API key.
 
     ```json5
     {

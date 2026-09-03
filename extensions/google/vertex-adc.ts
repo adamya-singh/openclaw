@@ -114,15 +114,35 @@ export function isGoogleVertexCredentialsMarker(
   return apiKey === undefined || apiKey === GCP_VERTEX_CREDENTIALS_MARKER;
 }
 
-function hasGoogleVertexProjectEnv(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(
-    normalizeOptionalString(env.GOOGLE_CLOUD_PROJECT) ||
-    normalizeOptionalString(env.GCLOUD_PROJECT),
+/** Vertex project id from the ADC-adjacent env contract (`GOOGLE_CLOUD_PROJECT`, then `GCLOUD_PROJECT`). */
+export function resolveGoogleVertexProjectEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return (
+    normalizeOptionalString(env.GOOGLE_CLOUD_PROJECT) ?? normalizeOptionalString(env.GCLOUD_PROJECT)
   );
 }
 
-function hasGoogleVertexLocationEnv(env: NodeJS.ProcessEnv): boolean {
-  return Boolean(normalizeOptionalString(env.GOOGLE_CLOUD_LOCATION));
+/** Vertex location id from `GOOGLE_CLOUD_LOCATION`. */
+export function resolveGoogleVertexLocationEnv(env: NodeJS.ProcessEnv): string | undefined {
+  return normalizeOptionalString(env.GOOGLE_CLOUD_LOCATION);
+}
+
+export type GoogleVertexTarget = { project: string; location: string };
+
+type GoogleVertexTargetParams = {
+  project?: unknown;
+  location?: unknown;
+  env?: NodeJS.ProcessEnv;
+};
+
+// Explicit provider config wins over env so one gateway can keep chat on the
+// `global` location while a capability that lacks global support pins a region.
+export function resolveGoogleVertexTarget(
+  params: GoogleVertexTargetParams,
+): GoogleVertexTarget | undefined {
+  const env = params.env ?? process.env;
+  const project = normalizeOptionalString(params.project) ?? resolveGoogleVertexProjectEnv(env);
+  const location = normalizeOptionalString(params.location) ?? resolveGoogleVertexLocationEnv(env);
+  return project && location ? { project, location } : undefined;
 }
 
 function resolveGoogleApplicationCredentialsPath(
@@ -220,14 +240,22 @@ function hasGoogleVertexAuthorizedUserAdcSync(env: NodeJS.ProcessEnv = process.e
   return false;
 }
 
+/**
+ * Cheap readiness check shared by the chat auth marker and capability
+ * providers: a resolvable project/location plus file-backed ADC. No network.
+ */
+export function hasGoogleVertexAdcTarget(params: GoogleVertexTargetParams): boolean {
+  const env = params.env ?? process.env;
+  return (
+    resolveGoogleVertexTarget({ ...params, env }) !== undefined &&
+    hasGoogleVertexAuthorizedUserAdcSync(env)
+  );
+}
+
 export function resolveGoogleVertexConfigApiKey(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
-  return hasGoogleVertexProjectEnv(env) &&
-    hasGoogleVertexLocationEnv(env) &&
-    hasGoogleVertexAuthorizedUserAdcSync(env)
-    ? GCP_VERTEX_CREDENTIALS_MARKER
-    : undefined;
+  return hasGoogleVertexAdcTarget({ env }) ? GCP_VERTEX_CREDENTIALS_MARKER : undefined;
 }
 
 async function refreshGoogleVertexAuthorizedUserAccessToken(params: {
@@ -380,8 +408,14 @@ async function resolveGoogleVertexAccessTokenViaGoogleAuth(
           ...(adcConfig ? { credentials: adcConfig } : {}),
           // Best-effort cancellation for clients that use the shared transporter.
           // WIF STS and GCE metadata need the owner-level deadline below.
+          // Pin the runtime's fetch: gaxios otherwise lazy-imports node-fetch,
+          // whose fetch-blob dependency fails to load under the repo's
+          // node-domexception override and kills every token refresh.
           clientOptions: {
-            transporterOptions: { timeout: GOOGLE_VERTEX_ADC_TOKEN_REFRESH_TIMEOUT_MS },
+            transporterOptions: {
+              timeout: GOOGLE_VERTEX_ADC_TOKEN_REFRESH_TIMEOUT_MS,
+              fetchImplementation: fetch,
+            },
           },
         });
       }),

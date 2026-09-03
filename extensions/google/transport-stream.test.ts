@@ -1468,7 +1468,7 @@ describe("google transport stream", () => {
 
     expect(googleAuthMock).toHaveBeenCalledWith({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-      clientOptions: { transporterOptions: { timeout: 30_000 } },
+      clientOptions: { transporterOptions: { timeout: 30_000, fetchImplementation: fetch } },
     });
     expect(googleAuthGetAccessTokenMock).toHaveBeenCalledTimes(1);
     expect(tokenFetchMock).not.toHaveBeenCalled();
@@ -1500,7 +1500,7 @@ describe("google transport stream", () => {
     });
     expect(googleAuthMock).toHaveBeenCalledWith({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-      clientOptions: { transporterOptions: { timeout: 30_000 } },
+      clientOptions: { transporterOptions: { timeout: 30_000, fetchImplementation: fetch } },
     });
     expect(tokenFetchMock).not.toHaveBeenCalled();
   });
@@ -1523,7 +1523,7 @@ describe("google transport stream", () => {
     expect(googleAuthMock).toHaveBeenCalledWith({
       scopes: ["https://www.googleapis.com/auth/cloud-platform"],
       credentials,
-      clientOptions: { transporterOptions: { timeout: 30_000 } },
+      clientOptions: { transporterOptions: { timeout: 30_000, fetchImplementation: fetch } },
     });
 
     resetGoogleVertexAdcState();

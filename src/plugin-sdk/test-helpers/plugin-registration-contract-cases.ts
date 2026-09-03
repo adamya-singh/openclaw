@@ -73,7 +73,7 @@ export const pluginRegistrationContractCases = {
     pluginId: "google",
     providerIds: ["google", "google-gemini-cli", "google-vertex"],
     webSearchProviderIds: ["gemini"],
-    realtimeVoiceProviderIds: ["google"],
+    realtimeVoiceProviderIds: ["google", "google-vertex"],
     speechProviderIds: ["google"],
     mediaUnderstandingProviderIds: ["google"],
     imageGenerationProviderIds: ["google"],

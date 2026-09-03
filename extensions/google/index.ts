@@ -21,13 +21,21 @@ import {
 } from "./generation-provider-metadata.js";
 import { geminiMemoryEmbeddingProviderAdapter } from "./memory-embedding-adapter.js";
 import { registerGoogleProvider } from "./provider-registration.js";
+import {
+  GOOGLE_REALTIME_VOICE_PROVIDERS,
+  type GoogleRealtimeVoiceTarget,
+} from "./realtime-voice-provider-metadata.js";
 import { buildGoogleSpeechProvider } from "./speech-provider.js";
 import { createGeminiWebSearchProvider } from "./src/gemini-web-search-provider.js";
+import { hasGoogleVertexAdcTarget } from "./vertex-adc.js";
 
 let googleImageGenerationProviderPromise: Promise<ImageGenerationProvider> | null = null;
 let googleMediaUnderstandingProviderPromise: Promise<MediaUnderstandingProvider> | null = null;
 let googleMusicGenerationProviderPromise: Promise<MusicGenerationProvider> | null = null;
-let googleRealtimeVoiceProviderPromise: Promise<RealtimeVoiceProviderPlugin> | null = null;
+const googleRealtimeVoiceProviderPromises = new Map<
+  GoogleRealtimeVoiceTarget,
+  Promise<RealtimeVoiceProviderPlugin>
+>();
 let googleVideoGenerationProviderPromise: Promise<VideoGenerationProvider> | null = null;
 
 type GoogleMediaUnderstandingProvider = Required<
@@ -64,13 +72,17 @@ async function loadGoogleMusicGenerationProvider(): Promise<MusicGenerationProvi
   return await googleMusicGenerationProviderPromise;
 }
 
-async function loadGoogleRealtimeVoiceProvider(): Promise<RealtimeVoiceProviderPlugin> {
-  if (!googleRealtimeVoiceProviderPromise) {
-    googleRealtimeVoiceProviderPromise = import("./realtime-voice-provider.js").then((mod) =>
-      mod.buildGoogleRealtimeVoiceProvider(),
+async function loadGoogleRealtimeVoiceProvider(
+  target: GoogleRealtimeVoiceTarget,
+): Promise<RealtimeVoiceProviderPlugin> {
+  let promise = googleRealtimeVoiceProviderPromises.get(target);
+  if (!promise) {
+    promise = import("./realtime-voice-provider.js").then((mod) =>
+      mod.buildGoogleRealtimeVoiceProvider({ target }),
     );
+    googleRealtimeVoiceProviderPromises.set(target, promise);
   }
-  return await googleRealtimeVoiceProviderPromise;
+  return await promise;
 }
 
 async function loadGoogleVideoGenerationProvider(): Promise<VideoGenerationProvider> {
@@ -158,23 +170,28 @@ function createLazyGoogleMusicGenerationProvider(): MusicGenerationProvider {
 
 function resolveGoogleRealtimeProviderConfig(
   rawConfig: RealtimeVoiceProviderConfig,
-  cfg?: { models?: { providers?: { google?: { apiKey?: unknown } } } },
+  cfg: { models?: { providers?: { google?: { apiKey?: unknown } } } } | undefined,
+  target: GoogleRealtimeVoiceTarget,
 ): RealtimeVoiceProviderConfig {
+  const providerId = GOOGLE_REALTIME_VOICE_PROVIDERS[target].id;
   const providers =
     typeof rawConfig.providers === "object" &&
     rawConfig.providers !== null &&
     !Array.isArray(rawConfig.providers)
       ? (rawConfig.providers as Record<string, unknown>)
       : undefined;
-  const nested = providers?.google;
+  const nested = providers?.[providerId];
+  const legacy = rawConfig[providerId];
   const raw =
     typeof nested === "object" && nested !== null && !Array.isArray(nested)
       ? (nested as Record<string, unknown>)
-      : typeof rawConfig.google === "object" &&
-          rawConfig.google !== null &&
-          !Array.isArray(rawConfig.google)
-        ? (rawConfig.google as Record<string, unknown>)
+      : typeof legacy === "object" && legacy !== null && !Array.isArray(legacy)
+        ? (legacy as Record<string, unknown>)
         : rawConfig;
+  if (target === "vertex") {
+    // Vertex authenticates with ADC; the runtime module drops any stray key.
+    return { ...raw };
+  }
   return {
     ...raw,
     ...(raw.apiKey === undefined
@@ -207,6 +224,7 @@ const GOOGLE_REALTIME_LAZY_MAX_PENDING_USER_MESSAGE_BYTES = 256 * 1024;
 
 function createLazyGoogleRealtimeVoiceBridge(
   req: RealtimeVoiceBridgeCreateRequest,
+  target: GoogleRealtimeVoiceTarget,
 ): RealtimeVoiceBridge {
   let bridge: RealtimeVoiceBridge | undefined;
   let bridgePromise: Promise<RealtimeVoiceBridge> | undefined;
@@ -233,7 +251,7 @@ function createLazyGoogleRealtimeVoiceBridge(
   };
   const loadBridge = async () => {
     if (!bridgePromise) {
-      bridgePromise = loadGoogleRealtimeVoiceProvider().then((provider) =>
+      bridgePromise = loadGoogleRealtimeVoiceProvider(target).then((provider) =>
         provider.createBridge({
           ...req,
           onReady: () => {
@@ -381,21 +399,36 @@ function createLazyGoogleRealtimeVoiceBridge(
   };
 }
 
-function createLazyGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
-  return {
-    id: "google",
-    label: "Google Live Voice",
+function createLazyGoogleRealtimeVoiceProvider(
+  target: GoogleRealtimeVoiceTarget,
+): RealtimeVoiceProviderPlugin {
+  const meta = GOOGLE_REALTIME_VOICE_PROVIDERS[target];
+  const shared = {
+    id: meta.id,
+    label: meta.label,
+    defaultModel: meta.defaultModel,
     autoSelectOrder: 20,
-    resolveConfig: ({ cfg, rawConfig }) => resolveGoogleRealtimeProviderConfig(rawConfig, cfg),
+    resolveConfig: ({ cfg, rawConfig }) =>
+      resolveGoogleRealtimeProviderConfig(rawConfig, cfg, target),
+    createBridge: (req) => createLazyGoogleRealtimeVoiceBridge(req, target),
+  } satisfies Partial<RealtimeVoiceProviderPlugin>;
+  if (target === "vertex") {
+    // Readiness stays a cheap local ADC check; token minting waits for the bridge.
+    return {
+      ...shared,
+      isConfigured: ({ providerConfig }) => hasGoogleVertexAdcTarget(providerConfig),
+    };
+  }
+  return {
+    ...shared,
     isConfigured: ({ cfg, providerConfig }) =>
       Boolean(
         normalizeOptionalString(providerConfig.apiKey) ??
         normalizeOptionalString(cfg?.models?.providers?.google?.apiKey) ??
         resolveGoogleRealtimeEnvApiKey(),
       ),
-    createBridge: createLazyGoogleRealtimeVoiceBridge,
     createBrowserSession: async (req) => {
-      const provider = await loadGoogleRealtimeVoiceProvider();
+      const provider = await loadGoogleRealtimeVoiceProvider(target);
       if (!provider.createBrowserSession) {
         throw new Error("Google realtime voice browser sessions are unavailable");
       }
@@ -424,7 +457,8 @@ export default definePluginEntry({
     api.registerImageGenerationProvider(createLazyGoogleImageGenerationProvider());
     api.registerMediaUnderstandingProvider(createLazyGoogleMediaUnderstandingProvider());
     api.registerMusicGenerationProvider(createLazyGoogleMusicGenerationProvider());
-    api.registerRealtimeVoiceProvider(createLazyGoogleRealtimeVoiceProvider());
+    api.registerRealtimeVoiceProvider(createLazyGoogleRealtimeVoiceProvider("gemini-api"));
+    api.registerRealtimeVoiceProvider(createLazyGoogleRealtimeVoiceProvider("vertex"));
     api.registerSpeechProvider(buildGoogleSpeechProvider());
     api.registerVideoGenerationProvider(createLazyGoogleVideoGenerationProvider());
     api.registerWebSearchProvider(createGeminiWebSearchProvider());

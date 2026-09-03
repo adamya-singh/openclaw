@@ -424,6 +424,49 @@ providers can also run through the generic Gateway relay transport, which
 keeps provider credentials on the Gateway.
 </Note>
 
+### Vertex AI (Application Default Credentials)
+
+The plugin also registers `google-vertex` as a realtime voice provider for
+Gateways that authenticate through Vertex AI with Application Default
+Credentials (`GOOGLE_APPLICATION_CREDENTIALS`, `GOOGLE_CLOUD_PROJECT` or
+`GCLOUD_PROJECT`, and `GOOGLE_CLOUD_LOCATION`). No AI Studio API key is used;
+the Gateway mints bearer tokens with the same credentials as `google-vertex`
+chat models.
+
+| Setting  | Config path                                   | Default                                       |
+| -------- | --------------------------------------------- | --------------------------------------------- |
+| Model    | `talk.realtime.providers.google-vertex.model` | `gemini-live-2.5-flash-native-audio`          |
+| Project  | `...google-vertex.project`                    | `GOOGLE_CLOUD_PROJECT`, then `GCLOUD_PROJECT` |
+| Location | `...google-vertex.location`                   | `GOOGLE_CLOUD_LOCATION`                       |
+| Voice    | `...google-vertex.speakerVoice`               | `Kore`                                        |
+
+The remaining tuning keys match the `google` provider table above. Vertex
+sessions are Gateway-owned only: the provider reports `transports:
+["gateway-relay"]`, no browser session, and no Video Talk, because Vertex has no
+constrained browser tokens. Set a regional `location` such as `us-central1`;
+the `global` location did not complete Live setup in testing, and the provider
+warns when it is selected.
+
+```json5
+{
+  talk: {
+    realtime: {
+      provider: "google-vertex",
+      mode: "realtime",
+      transport: "gateway-relay",
+      brain: "agent-consult",
+      providers: {
+        "google-vertex": {
+          location: "us-central1",
+          model: "gemini-live-2.5-flash-native-audio",
+          speakerVoice: "Kore",
+        },
+      },
+    },
+  },
+}
+```
+
 For maintainer live verification, run
 `OPENAI_API_KEY=... GEMINI_API_KEY=... node --import tsx scripts/dev/realtime-talk-live-smoke.ts`.
 The smoke also covers OpenAI backend/WebRTC paths; the Google leg mints the same

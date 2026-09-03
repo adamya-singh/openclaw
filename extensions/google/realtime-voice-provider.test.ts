@@ -1,4 +1,7 @@
 // Google tests cover realtime voice provider plugin behavior.
+import { mkdtemp, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import {
   REALTIME_VOICE_AUDIO_FORMAT_PCM16_24KHZ,
   resamplePcm,
@@ -25,38 +28,60 @@ type MockGoogleLiveConnectParams = {
   };
 };
 
-const { connectMock, createGoogleGenAIMock, createTokenMock, session } = vi.hoisted(() => {
-  const sessionValue: MockGoogleLiveSession = {
-    close: vi.fn(),
-    sendClientContent: vi.fn(),
-    sendRealtimeInput: vi.fn(),
-    sendToolResponse: vi.fn(),
-  };
-  const connectMockLocal = vi.fn(async (_params: MockGoogleLiveConnectParams) => sessionValue);
-  const createTokenMockLocal = vi.fn(async (_params: unknown) => ({
-    name: "auth_tokens/browser-session",
-  }));
-  const createGoogleGenAIMockLocal = vi.fn(() => ({
-    authTokens: {
-      create: createTokenMockLocal,
-    },
-    live: {
-      connect: connectMockLocal,
-    },
-  }));
-  return {
-    connectMock: connectMockLocal,
-    createGoogleGenAIMock: createGoogleGenAIMockLocal,
-    createTokenMock: createTokenMockLocal,
-    session: sessionValue,
-  };
-});
+const { connectMock, createGoogleGenAIMock, createTokenMock, session, warnMock } = vi.hoisted(
+  () => {
+    const sessionValue: MockGoogleLiveSession = {
+      close: vi.fn(),
+      sendClientContent: vi.fn(),
+      sendRealtimeInput: vi.fn(),
+      sendToolResponse: vi.fn(),
+    };
+    const connectMockLocal = vi.fn(async (_params: MockGoogleLiveConnectParams) => sessionValue);
+    const createTokenMockLocal = vi.fn(async (_params: unknown) => ({
+      name: "auth_tokens/browser-session",
+    }));
+    const createGoogleGenAIMockLocal = vi.fn(() => ({
+      authTokens: {
+        create: createTokenMockLocal,
+      },
+      live: {
+        connect: connectMockLocal,
+      },
+    }));
+    return {
+      connectMock: connectMockLocal,
+      createGoogleGenAIMock: createGoogleGenAIMockLocal,
+      createTokenMock: createTokenMockLocal,
+      session: sessionValue,
+      warnMock: vi.fn(),
+    };
+  },
+);
 
 vi.mock("./google-genai-runtime.js", () => ({
   createGoogleGenAI: createGoogleGenAIMock,
 }));
+vi.mock("openclaw/plugin-sdk/runtime-env", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("openclaw/plugin-sdk/runtime-env")>()),
+  warn: warnMock,
+}));
+vi.mock("./vertex-adc.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./vertex-adc.js")>()),
+  resolveGoogleVertexAuthorizedUserHeaders: async () => ({
+    Authorization: "Bearer vertex-token",
+    "x-goog-user-project": "billing-project",
+  }),
+}));
 
-const ENV_KEYS = ["GEMINI_API_KEY", "GOOGLE_API_KEY"] as const;
+const ENV_KEYS = [
+  "GEMINI_API_KEY",
+  "GOOGLE_API_KEY",
+  "GOOGLE_APPLICATION_CREDENTIALS",
+  "GOOGLE_CLOUD_PROJECT",
+  "GCLOUD_PROJECT",
+  "GOOGLE_CLOUD_LOCATION",
+  "GOOGLE_GENAI_USE_VERTEXAI",
+] as const;
 
 let envSnapshot: Partial<Record<(typeof ENV_KEYS)[number], string>>;
 
@@ -158,8 +183,10 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
     session.sendClientContent.mockClear();
     session.sendRealtimeInput.mockClear();
     session.sendToolResponse.mockClear();
-    delete process.env.GEMINI_API_KEY;
-    delete process.env.GOOGLE_API_KEY;
+    warnMock.mockClear();
+    for (const key of ENV_KEYS) {
+      delete process.env[key];
+    }
   });
 
   afterEach(() => {
@@ -201,6 +228,105 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
       supportsVideoFrames: true,
       supportsSessionResumption: true,
     });
+  });
+
+  it("declares relay-only capabilities for Google Vertex Live Voice", () => {
+    const provider = buildGoogleRealtimeVoiceProvider({ target: "vertex" });
+
+    expect([provider.id, provider.label, provider.defaultModel]).toEqual([
+      "google-vertex",
+      "Google Vertex Live Voice",
+      "gemini-live-2.5-flash-native-audio",
+    ]);
+    expect(provider.createBrowserSession).toBeUndefined();
+    expect(provider.capabilities).toMatchObject({
+      transports: ["gateway-relay"],
+      supportsBrowserSession: false,
+      supportsVideoFrames: false,
+      supportsToolCalls: true,
+      supportsSessionResumption: true,
+    });
+  });
+
+  it("connects to Vertex AI with project and location and never an API key", async () => {
+    process.env.GEMINI_API_KEY = "ignored-env-key";
+    process.env.GOOGLE_CLOUD_PROJECT = "env-project";
+    process.env.GOOGLE_CLOUD_LOCATION = "global";
+    const provider = buildGoogleRealtimeVoiceProvider({ target: "vertex" });
+    const bridge = provider.createBridge({
+      providerConfig: {
+        providers: {
+          "google-vertex": { apiKey: "ignored-config-key", location: "us-central1" },
+        },
+      },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+
+    await bridge.connect();
+
+    // Config location overrides env; project falls back to env; no key reaches the SDK.
+    const clientConfig = requireFirstMockArg(createGoogleGenAIMock, "GoogleGenAI config") as {
+      apiKey?: string;
+      googleAuthOptions?: { authClient?: { getRequestHeaders: () => Promise<Headers> } };
+    };
+    expect(clientConfig).toMatchObject({
+      vertexai: true,
+      project: "env-project",
+      location: "us-central1",
+      httpOptions: { apiVersion: "v1beta1" },
+    });
+    expect(clientConfig).not.toHaveProperty("apiKey");
+    // The plugin's own token helper backs the SDK auth client, so the SDK never
+    // mints tokens through its runtime-resolved google-auth-library.
+    const headers = await clientConfig.googleAuthOptions?.authClient?.getRequestHeaders();
+    expect([...(headers ?? new Headers())]).toEqual([
+      ["authorization", "Bearer vertex-token"],
+      ["x-goog-user-project", "billing-project"],
+    ]);
+    expect(lastConnectParams().model).toBe("gemini-live-2.5-flash-native-audio");
+    expect(warnMock).not.toHaveBeenCalled();
+  });
+
+  it("warns when the Vertex location is global and fails without a target", () => {
+    const provider = buildGoogleRealtimeVoiceProvider({ target: "vertex" });
+
+    provider.createBridge({
+      providerConfig: { project: "vertex-project", location: "global" },
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+    expect(warnMock).toHaveBeenCalledWith(expect.stringContaining("us-central1"));
+
+    expect(() =>
+      provider.createBridge({
+        providerConfig: { project: "vertex-project" },
+        onAudio: vi.fn(),
+        onClearAudio: vi.fn(),
+      }),
+    ).toThrow(/GOOGLE_CLOUD_LOCATION/);
+  });
+
+  it("reports the Vertex provider configured only with a target and detectable ADC", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-google-vertex-realtime-"));
+    const credentialsPath = path.join(tempDir, "service-account.json");
+    await writeFile(credentialsPath, JSON.stringify({ type: "service_account" }), "utf8");
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
+    process.env.GCLOUD_PROJECT = "vertex-project";
+    const provider = buildGoogleRealtimeVoiceProvider({ target: "vertex" });
+
+    expect(provider.isConfigured({ providerConfig: {} })).toBe(false);
+    expect(provider.isConfigured({ providerConfig: { location: "us-central1" } })).toBe(true);
+    process.env.GOOGLE_CLOUD_LOCATION = "us-central1";
+    expect(provider.isConfigured({ providerConfig: {} })).toBe(true);
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = path.join(tempDir, "missing.json");
+    expect(provider.isConfigured({ providerConfig: {} })).toBe(false);
+    expect(
+      provider.resolveConfig?.({
+        cfg: {} as never,
+        rawConfig: { providers: { "google-vertex": { apiKey: "stray", location: "us-central1" } } },
+      }),
+    ).toMatchObject({ apiKey: undefined, location: "us-central1" });
   });
 
   it("uses Gemini 3.1 Live-compatible defaults", async () => {
@@ -263,6 +389,8 @@ describe("buildGoogleRealtimeVoiceProvider", () => {
 
     expect(resolved).toEqual({
       apiKey: "cfg-key",
+      project: undefined,
+      location: undefined,
       model: "gemini-live-2.5-flash-preview",
       voice: "Puck",
       temperature: 0.4,

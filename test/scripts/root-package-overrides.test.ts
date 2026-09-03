@@ -11,6 +11,7 @@ type RootPackageManifest = {
 
 type PnpmWorkspaceConfig = {
   overrides?: Record<string, string>;
+  allowedDeprecatedVersions?: Record<string, string>;
 };
 
 type PnpmLockfileConfig = {
@@ -53,13 +54,17 @@ describe("root package override guardrails", () => {
     expect(pnpmWorkspace.overrides).not.toHaveProperty(packageName);
   });
 
-  it("pins the node-domexception alias exactly in pnpm override metadata", () => {
-    const manifest = readRootManifest();
+  it("keeps node-domexception importable from ESM instead of aliasing it away", async () => {
+    // fetch-blob/formdata-node (via node-fetch@3 -> gaxios -> google-auth-library) default-import
+    // this package from ESM; the @nolyfill alias exports `undefined` there and every Google
+    // service-account token mint fails under Vitest/tsx. Mute the deprecation, keep the module.
     const pnpmWorkspace = readPnpmWorkspaceConfig();
-    const pnpmOverride = pnpmWorkspace.overrides?.["node-domexception"];
+    const domExceptionModule = await import("node-domexception");
 
-    expect(pnpmOverride).toBe("npm:@nolyfill/domexception@1.0.28");
-    expect(manifest.overrides).toBeUndefined();
+    expect(pnpmWorkspace.overrides).not.toHaveProperty("node-domexception");
+    expect(pnpmWorkspace.allowedDeprecatedVersions?.["node-domexception"]).toBe("1");
+    expect(domExceptionModule.default).toBe(globalThis.DOMException);
+    await expect(import("node-fetch")).resolves.toBeDefined();
   });
 
   it("keeps pnpm and lockfile override metadata aligned without duplicating root package policy", () => {

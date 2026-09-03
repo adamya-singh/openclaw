@@ -24,16 +24,20 @@ import googlePlugin from "./index.js";
 import googleProviderDiscovery from "./provider-discovery.js";
 import { registerGoogleProvider } from "./provider-registration.js";
 
-const { createRealtimeBridgeMock } = vi.hoisted(() => ({
-  createRealtimeBridgeMock: vi.fn<(req: RealtimeVoiceBridgeCreateRequest) => RealtimeVoiceBridge>(),
-}));
+const { createRealtimeBridgeMock, buildRealtimeProviderMock } = vi.hoisted(() => {
+  const createBridge = vi.fn<(req: RealtimeVoiceBridgeCreateRequest) => RealtimeVoiceBridge>();
+  return {
+    createRealtimeBridgeMock: createBridge,
+    buildRealtimeProviderMock: vi.fn((options?: { target?: string }) => ({
+      id: options?.target === "vertex" ? "google-vertex" : "google",
+      label: options?.target === "vertex" ? "Google Vertex Live Voice" : "Google Live Voice",
+      createBridge,
+    })),
+  };
+});
 
 vi.mock("./realtime-voice-provider.js", () => ({
-  buildGoogleRealtimeVoiceProvider: () => ({
-    id: "google",
-    label: "Google Live Voice",
-    createBridge: createRealtimeBridgeMock,
-  }),
+  buildGoogleRealtimeVoiceProvider: buildRealtimeProviderMock,
 }));
 
 const googleProviderPlugin = {
@@ -570,6 +574,76 @@ describe("google provider plugin hooks", () => {
 
     expect(googleProvider.buildReplayPolicy).toBe(cliProvider.buildReplayPolicy);
     expect(googleProvider.wrapStreamFn).toBe(cliProvider.wrapStreamFn);
+  });
+
+  it("registers Gemini API and Vertex realtime voice providers", async () => {
+    const providers: RealtimeVoiceProviderPlugin[] = [];
+    googlePlugin.register(
+      createTestPluginApi({
+        registerRealtimeVoiceProvider(provider) {
+          providers.push(provider);
+        },
+      }),
+    );
+    expect(providers.map((provider) => [provider.id, provider.defaultModel])).toEqual([
+      ["google", "gemini-3.1-flash-live-preview"],
+      ["google-vertex", "gemini-live-2.5-flash-native-audio"],
+    ]);
+    const vertex = providers[1];
+    if (!vertex) {
+      throw new Error("expected Vertex realtime provider");
+    }
+    expect(vertex.createBrowserSession).toBeUndefined();
+
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "openclaw-google-vertex-realtime-"));
+    const credentialsPath = path.join(tempDir, "service-account.json");
+    await writeFile(credentialsPath, JSON.stringify({ type: "service_account" }), "utf8");
+    const envKeys = [
+      "GOOGLE_APPLICATION_CREDENTIALS",
+      "GOOGLE_CLOUD_PROJECT",
+      "GCLOUD_PROJECT",
+      "GOOGLE_CLOUD_LOCATION",
+    ] as const;
+    const envSnapshot = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+    try {
+      for (const key of envKeys) {
+        delete process.env[key];
+      }
+      process.env.GOOGLE_APPLICATION_CREDENTIALS = credentialsPath;
+      const providerConfig = vertex.resolveConfig?.({
+        cfg: {} as never,
+        rawConfig: {
+          providers: {
+            google: { apiKey: "gemini-key" },
+            "google-vertex": { project: "vertex-project", location: "us-central1" },
+          },
+        },
+      });
+      // Vertex config is keyed by its own provider id and never inherits the Gemini key.
+      expect(providerConfig).toEqual({ project: "vertex-project", location: "us-central1" });
+      expect(vertex.isConfigured({ providerConfig: providerConfig ?? {} })).toBe(true);
+      expect(vertex.isConfigured({ providerConfig: { project: "vertex-project" } })).toBe(false);
+
+      const loaded = createMockRealtimeBridge();
+      createRealtimeBridgeMock.mockReturnValue(loaded.bridge);
+      const bridge = vertex.createBridge({
+        providerConfig: providerConfig ?? {},
+        onAudio() {},
+        onClearAudio() {},
+      });
+      await bridge.connect();
+      expect(buildRealtimeProviderMock).toHaveBeenCalledWith({ target: "vertex" });
+      expect(loaded.connect).toHaveBeenCalledTimes(1);
+    } finally {
+      for (const key of envKeys) {
+        const value = envSnapshot[key];
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 
   it("buffers early realtime audio while the lazy Google bridge loads", () => {
