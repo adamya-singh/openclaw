@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AssistantMessage } from "../../llm/types.js";
 import type { EmbeddedRunAttemptResult } from "../embedded-agent-runner/run/types.js";
-import { EmptySettledTurnFinalizationError } from "./settled-turn-finalization-outcome.js";
 import {
   assertSettledTurnFinalizationResult,
+  classifySettledTurnFinalizationText,
   projectSettledTurnFinalizationAttemptResult,
 } from "./settled-turn-finalization-result.js";
 import type { AgentHarnessSettledTurnFinalizationResult } from "./types.js";
@@ -83,23 +83,20 @@ describe("assertSettledTurnFinalizationResult", () => {
       assistant: assistantMessage([{ type: "text", text: "  " }]),
     };
 
-    try {
-      assertSettledTurnFinalizationResult(result);
-      throw new Error("expected completed-empty classification");
-    } catch (error) {
-      expect(error).toBeInstanceOf(EmptySettledTurnFinalizationError);
-      expect((error as EmptySettledTurnFinalizationError).result).toBe(result);
-    }
+    expect(assertSettledTurnFinalizationResult(result)).toBe(result);
+    expect(classifySettledTurnFinalizationText(result)).toEqual({ outcome: "empty", text: "" });
   });
 
-  it("classifies an intentionally silent answer as completed-empty", () => {
+  it("distinguishes an intentionally silent answer from an empty answer", () => {
     const result = {
       assistant: assistantMessage([{ type: "text", text: "NO_REPLY" }]),
     };
 
-    expect(() => assertSettledTurnFinalizationResult(result)).toThrow(
-      EmptySettledTurnFinalizationError,
-    );
+    expect(assertSettledTurnFinalizationResult(result)).toBe(result);
+    expect(classifySettledTurnFinalizationText(result)).toEqual({
+      outcome: "silent",
+      text: "NO_REPLY",
+    });
   });
 
   it.each(["length", "error", "aborted"] as const)(

@@ -33,8 +33,10 @@ import type { EmbeddedRunAttemptResult } from "../embedded-agent-runner/run/type
 import { copyCoreTtsAttemptResultProvenance } from "../tools/tts-tool-result-provenance.js";
 import { recordAgentHarnessPreflightOwner } from "./errors.js";
 import { applyAgentHarnessResultClassification } from "./result-classification.js";
-import { EmptySettledTurnFinalizationError } from "./settled-turn-finalization-outcome.js";
-import { assertSettledTurnFinalizationResult } from "./settled-turn-finalization-result.js";
+import {
+  assertSettledTurnFinalizationResult,
+  classifySettledTurnFinalizationText,
+} from "./settled-turn-finalization-result.js";
 import type {
   AgentHarness,
   AgentHarnessAttemptParams,
@@ -48,7 +50,8 @@ type AgentHarnessCanonicalAttemptResult = EmbeddedRunAttemptResult;
 
 type AgentHarnessLifecycleFinalizationOutcome =
   | { outcome: "answered"; result: AgentHarnessSettledTurnFinalizationResult }
-  | { outcome: "empty"; result: AgentHarnessSettledTurnFinalizationResult };
+  | { outcome: "empty"; result: AgentHarnessSettledTurnFinalizationResult }
+  | { outcome: "silent"; result: AgentHarnessSettledTurnFinalizationResult };
 
 type AgentHarnessLifecyclePhase = DiagnosticHarnessRunErrorEvent["phase"];
 type AgentRunCompletedOutcome = "completed" | "aborted" | "blocked" | "error";
@@ -404,19 +407,10 @@ export async function runAgentHarnessLifecycleFinalization(
   try {
     const runAndValidate = async () => {
       phase = "send";
-      try {
-        const rawResult = await execute();
-        phase = "resolve";
-        return {
-          outcome: "answered" as const,
-          result: assertSettledTurnFinalizationResult(rawResult),
-        };
-      } catch (error) {
-        if (error instanceof EmptySettledTurnFinalizationError) {
-          return { outcome: "empty" as const, result: error.result };
-        }
-        throw error;
-      }
+      const rawResult = await execute();
+      phase = "resolve";
+      const result = assertSettledTurnFinalizationResult(rawResult);
+      return { outcome: classifySettledTurnFinalizationText(result).outcome, result };
     };
     const rawResult = agentRunTrace
       ? await runWithDiagnosticTraceContext(agentRunTrace, runAndValidate)

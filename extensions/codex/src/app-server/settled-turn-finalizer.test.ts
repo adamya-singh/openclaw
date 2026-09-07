@@ -228,7 +228,7 @@ describe("runCodexSettledTurnFinalization", () => {
     expect(mocks.mirror).not.toHaveBeenCalled();
   });
 
-  it("returns an intentionally silent final answer as completed empty before transcript mutation", async () => {
+  it("preserves an intentionally silent final answer without transcript mutation", async () => {
     mocks.runBounded.mockResolvedValue({ text: "NO_REPLY", items: [], model: "gpt-5.4" });
 
     await expect(
@@ -236,7 +236,9 @@ describe("runCodexSettledTurnFinalization", () => {
         { attempt: createAttempt(), settledAttempt: createSettledAttempt() },
         {},
       ),
-    ).resolves.toMatchObject({ assistant: { content: [{ type: "text", text: "" }] } });
+    ).resolves.toMatchObject({
+      assistant: { content: [{ type: "text", text: "NO_REPLY" }] },
+    });
     expect(mocks.mirror).not.toHaveBeenCalled();
   });
 

@@ -9,7 +9,7 @@ import {
 } from "../../../config/sessions/transcript-write-context.js";
 import { formatErrorMessage } from "../../../infra/errors.js";
 import { appendAssistantMirrorMessageByIdentity } from "../../../plugin-sdk/session-transcript-runtime.js";
-import { resolveSettledTurnFinalizationText } from "../../harness/settled-turn-finalization-result.js";
+import { classifySettledTurnFinalizationText } from "../../harness/settled-turn-finalization-result.js";
 import type {
   AgentHarness,
   AgentHarnessSettledTurnFinalizationResult,
@@ -132,19 +132,24 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     `settled post-tool turn lacked a final answer: runId=${runParams.runId} sessionId=${runParams.sessionId} ` +
       `provider=${errorContext.provider}/${errorContext.model} — running isolated finalization`,
   );
-  let finalizationOutcome: "answered" | "empty" | "failed" = "failed";
+  let finalizationOutcome: "answered" | "empty" | "silent" | "failed" = "failed";
   try {
     let finalization: Awaited<ReturnType<typeof runPreparedSettledTurnFinalization>>;
     let finalizationAttempt = 0;
     do {
       finalizationAttempt += 1;
-      finalization = await runPreparedSettledTurnFinalization({
+      const completedFinalization = await runPreparedSettledTurnFinalization({
         attempt: input.finalization.preparedAttempt,
         settledAttempt: initial.attempt,
         harness: input.finalization.harness,
         prompt,
         noteLaneTaskProgress: input.finalization.noteLaneTaskProgress,
       });
+      finalization =
+        completedFinalization.outcome === "silent" &&
+        runParams.allowEmptyAssistantReplyAsSilent !== true
+          ? { ...completedFinalization, outcome: "empty" }
+          : completedFinalization;
       attempt = finalization.attempt;
       mergeUsageIntoAccumulator(input.terminalBase.usageAccumulator, attempt.attemptUsage);
       mergeAttemptRunStatsIntoAccumulator(input.terminalBase.usageAccumulator, attempt);
@@ -187,7 +192,11 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
         `provider=${errorContext.provider}/${errorContext.model} error=${formatErrorMessage(error)} — ${terminalFallbackAllowed ? "using terminal fallback reply" : "preserving silent helper failure"}`,
     );
   }
-  if (finalizationOutcome !== "answered" && terminalFallbackAllowed) {
+  if (
+    finalizationOutcome !== "answered" &&
+    finalizationOutcome !== "silent" &&
+    terminalFallbackAllowed
+  ) {
     if (input.finalization.preparedAttempt.abortSignal?.aborted) {
       log.warn(
         `settled-turn fallback was cancelled before transcript persistence: runId=${runParams.runId} sessionId=${runParams.sessionId} ` +
@@ -268,7 +277,9 @@ export async function prepareTerminalWithSettledTurnFinalization(input: {
     prepared,
     lastRunPromptUsage,
     finalizationOutcome:
-      finalizationOutcome === "empty" ? ("completed-empty" as const) : finalizationOutcome,
+      finalizationOutcome === "empty" || finalizationOutcome === "silent"
+        ? ("completed-empty" as const)
+        : finalizationOutcome,
   };
 }
 
@@ -321,7 +332,10 @@ async function runPreparedSettledTurnFinalization(input: {
   harness: AgentHarness;
   prompt: string;
   noteLaneTaskProgress: () => void;
-}): Promise<{ outcome: "answered" | "empty"; attempt: EmbeddedRunAttemptWithReceiptEvidence }> {
+}): Promise<{
+  outcome: "answered" | "empty" | "silent";
+  attempt: EmbeddedRunAttemptWithReceiptEvidence;
+}> {
   return await withEmbeddedRunLaneProgressHeartbeat(input.noteLaneTaskProgress, async () => {
     const finalization = await runEmbeddedSettledTurnFinalizationWithBackend(
       {
@@ -351,7 +365,7 @@ async function runPreparedSettledTurnFinalization(input: {
 }
 
 function buildSettledTurnFinalizationAttemptResult(input: {
-  outcome: "answered" | "empty";
+  outcome: "answered" | "empty" | "silent";
   result: AgentHarnessSettledTurnFinalizationResult;
   settledAttempt: EmbeddedRunAttemptWithReceiptEvidence;
   prompt: string;
@@ -359,7 +373,7 @@ function buildSettledTurnFinalizationAttemptResult(input: {
   runtimePlan?: EmbeddedRunAttemptParams["runtimePlan"];
 }): EmbeddedRunAttemptWithReceiptEvidence {
   const { result, settledAttempt } = input;
-  const text = input.outcome === "empty" ? "" : resolveSettledTurnFinalizationText(result);
+  const { text } = classifySettledTurnFinalizationText(result);
   // Finalization replaces terminal ownership, not host-private facts from settled tools.
   // Keep those facts while replay, abort, and lifecycle state remain finalizer-local.
   return {

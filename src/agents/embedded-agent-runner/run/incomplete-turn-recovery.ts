@@ -120,10 +120,7 @@ export function shouldTreatEmptyAssistantReplyAsSilent(params: {
   // tools is intentional there; retry is replay-unsafe, so erroring would mark
   // successful tool-only runs as failures.
   const terminalReplyOptional = params.terminalReplyExpectation === "optional";
-  if (
-    !params.allowEmptyAssistantReplyAsSilent ||
-    shouldSkipNonVisibleTurnRetry({ ...params, tolerateSideEffects: terminalReplyOptional })
-  ) {
+  if (!params.allowEmptyAssistantReplyAsSilent) {
     return false;
   }
   if (hasCommittedMessagingToolDeliveryEvidence(params.attempt)) {
@@ -135,7 +132,13 @@ export function shouldTreatEmptyAssistantReplyAsSilent(params: {
     assistant?.stopReason !== "error" &&
     hasOnlySilentAssistantReply(params.attempt.assistantTexts)
   ) {
-    return true;
+    // NO_REPLY is an explicit terminal decision, not an empty turn to retry.
+    // Prior tool effects therefore do not invalidate it, while aborts, failures,
+    // and other terminal owners still do.
+    return !shouldSkipNonVisibleTurnRetry({ ...params, tolerateSideEffects: true });
+  }
+  if (shouldSkipNonVisibleTurnRetry({ ...params, tolerateSideEffects: terminalReplyOptional })) {
+    return false;
   }
   // A visible turn owes a reply unless the model explicitly chose NO_REPLY.
   // Bare empty and reasoning-only stops are provider failures, even when the

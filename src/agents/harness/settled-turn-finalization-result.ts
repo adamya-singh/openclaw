@@ -1,7 +1,6 @@
 import { isSilentReplyText } from "../../auto-reply/tokens.js";
 import { normalizeAgentRunAttemptTerminal } from "../agent-run-terminal-outcome.js";
 import { resolveFinalAssistantVisibleText } from "../embedded-agent-runner/run/helpers.js";
-import { EmptySettledTurnFinalizationError } from "./settled-turn-finalization-outcome.js";
 import type {
   AgentHarnessAttemptResult,
   AgentHarnessSettledTurnFinalizationResult,
@@ -54,18 +53,20 @@ export function assertSettledTurnFinalizationResult(
   ) {
     throw new Error("Settled-turn finalization returned an invalid assistant message index");
   }
-  resolveSettledTurnFinalizationText(result);
   return result;
 }
 
-export function resolveSettledTurnFinalizationText(
+export function classifySettledTurnFinalizationText(
   result: AgentHarnessSettledTurnFinalizationResult,
-): string {
+): { outcome: "answered" | "empty" | "silent"; text: string } {
   const text = resolveFinalAssistantVisibleText(result.assistant);
-  if (!text || isSilentReplyText(text)) {
-    throw new EmptySettledTurnFinalizationError(result);
+  if (!text) {
+    return { outcome: "empty", text: "" };
   }
-  return text;
+  if (isSilentReplyText(text)) {
+    return { outcome: "silent", text };
+  }
+  return { outcome: "answered", text };
 }
 
 /**

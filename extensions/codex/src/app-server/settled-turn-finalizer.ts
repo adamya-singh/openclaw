@@ -83,7 +83,7 @@ export async function runCodexSettledTurnFinalization(
     );
   }
   const text = bounded.text.trim();
-  if (!text || isSilentReplyText(text)) {
+  if (!text) {
     return {
       assistant: createAssistantMessage(attempt, "", {
         tokenUsage: bounded.usage,
@@ -93,23 +93,27 @@ export async function runCodexSettledTurnFinalization(
       ...(bounded.usage ? { usage: bounded.usage } : {}),
     };
   }
+  const assistant = createAssistantMessage(attempt, text, {
+    tokenUsage: bounded.usage,
+    aborted: false,
+    promptError: null,
+  });
+  if (isSilentReplyText(text)) {
+    return {
+      assistant,
+      ...(bounded.usage ? { usage: bounded.usage } : {}),
+    };
+  }
 
   const mirrorIdentity = `settled-finalizer:${attempt.runId}`;
-  const assistant = attachCodexMirrorIdentity(
-    createAssistantMessage(attempt, text, {
-      tokenUsage: bounded.usage,
-      aborted: false,
-      promptError: null,
-    }),
-    mirrorIdentity,
-  );
+  const mirroredAssistant = attachCodexMirrorIdentity(assistant, mirrorIdentity);
   const mirrorResult = await codexTranscriptMirrorRuntime.mirror({
     sessionId: attempt.sessionId,
     sessionKey: attempt.sessionKey,
     agentId: attempt.agentId,
     storePath: attempt.sessionTarget?.storePath,
     cwd: attempt.workspaceDir,
-    messages: [assistant],
+    messages: [mirroredAssistant],
     idempotencyScope: `codex-settled-finalizer:${attempt.runId}`,
     runId: attempt.runId,
     terminalAssistantOwner: { mirrorIdentity, runId: attempt.runId },
@@ -120,7 +124,7 @@ export async function runCodexSettledTurnFinalization(
   const persistedMessage = mirrorResult.messagesPresent.find(
     (message) => readMirrorIdentity(message) === mirrorIdentity,
   );
-  const expectedFingerprint = fingerprintCodexMirrorSourceMessage(assistant);
+  const expectedFingerprint = fingerprintCodexMirrorSourceMessage(mirroredAssistant);
   if (
     !mirrorResult.assistantMirrorIdentitiesOwned.includes(mirrorIdentity) ||
     !persistedMessage ||

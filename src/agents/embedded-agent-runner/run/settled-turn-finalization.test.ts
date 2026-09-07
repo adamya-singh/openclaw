@@ -209,7 +209,7 @@ describe("resolveSettledTurnFinalizationRequest", () => {
     ).toBeNull();
   });
 
-  it("keeps explicit silence terminal only for reply-optional settled turns", () => {
+  it("keeps explicitly allowed silence terminal after settled tools", () => {
     const toolUseAssistant = buildEmbeddedRunnerAssistant({
       stopReason: "toolUse",
       content: [{ type: "toolCall", id: "tool-1", name: "write", arguments: {} }],
@@ -235,13 +235,14 @@ describe("resolveSettledTurnFinalizationRequest", () => {
     });
 
     const request = (runParams: {
-      trigger: "heartbeat" | "user";
+      trigger: "cron" | "heartbeat";
       terminalReplyExpectation?: "required";
     }) =>
       resolveSettledTurnFinalizationRequest({
         runParams: {
           sessionId: "session:settled-silent",
           runId: "run:settled-silent",
+          allowEmptyAssistantReplyAsSilent: true,
           ...runParams,
         } as never,
         attempt,
@@ -258,9 +259,7 @@ describe("resolveSettledTurnFinalizationRequest", () => {
       });
 
     expect(request({ trigger: "heartbeat" })).toBeNull();
-    expect(request({ trigger: "user", terminalReplyExpectation: "required" })).toBe(
-      SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION,
-    );
+    expect(request({ trigger: "cron", terminalReplyExpectation: "required" })).toBeNull();
   });
 
   it("requires an available finalizer and no visible structured error", () => {
@@ -501,6 +500,46 @@ describe("prepareTerminalWithSettledTurnFinalization", () => {
       expect.objectContaining({ text: "The command completed successfully." }),
     ]);
     expect(result.prepared.agentMeta).toMatchObject({ assistantTurns: 3 });
+  });
+
+  it("accepts an allowed silent finalization without retrying or creating a fallback", async () => {
+    const attempt = settledFailedAttempt();
+    const silentAssistant = buildEmbeddedRunnerAssistant({
+      content: [{ type: "text", text: SILENT_REPLY_TOKEN }],
+    });
+    backendMocks.runSettledFinalization.mockResolvedValue({
+      outcome: "silent",
+      result: { assistant: silentAssistant, usage: silentAssistant.usage },
+    });
+    const input = finalizationInput(attempt);
+    input.terminalBase.runParams.allowEmptyAssistantReplyAsSilent = true;
+
+    const result = await prepareTerminalWithSettledTurnFinalization(input);
+
+    expect(backendMocks.runSettledFinalization).toHaveBeenCalledOnce();
+    expect(transcriptMocks.appendAssistantMirrorMessageByIdentity).not.toHaveBeenCalled();
+    expect(result.finalizationOutcome).toBe("completed-empty");
+    expect(result.attempt.assistantTexts).toEqual([SILENT_REPLY_TOKEN]);
+    expect(result.prepared.payloadsWithToolMedia).toEqual([]);
+  });
+
+  it("keeps disallowed silent finalization on the empty retry and fallback path", async () => {
+    const attempt = settledFailedAttempt();
+    const silentAssistant = buildEmbeddedRunnerAssistant({
+      content: [{ type: "text", text: SILENT_REPLY_TOKEN }],
+    });
+    backendMocks.runSettledFinalization.mockResolvedValue({
+      outcome: "silent",
+      result: { assistant: silentAssistant, usage: silentAssistant.usage },
+    });
+
+    const result = await prepareTerminalWithSettledTurnFinalization(finalizationInput(attempt));
+
+    expect(backendMocks.runSettledFinalization).toHaveBeenCalledTimes(2);
+    expect(result.finalizationOutcome).toBe("completed-empty");
+    expect(result.prepared.payloadsWithToolMedia).toEqual([
+      expect.objectContaining({ text: SETTLED_TOOL_FINALIZATION_FALLBACK_TEXT }),
+    ]);
   });
 
   it("delivers a host fallback after two empty tool-free finalization attempts", async () => {

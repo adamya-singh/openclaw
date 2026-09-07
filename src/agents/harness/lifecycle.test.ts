@@ -26,7 +26,6 @@ import {
   runAgentHarnessLifecycleAttempt,
   runAgentHarnessLifecycleFinalization,
 } from "./lifecycle.js";
-import { EmptySettledTurnFinalizationError } from "./settled-turn-finalization-outcome.js";
 import type {
   AgentHarness,
   AgentHarnessAttemptParamsV2,
@@ -334,7 +333,7 @@ describe("AgentHarness lifecycle runner", () => {
     ]);
   });
 
-  it("records an empty finalization already validated by the harness owner", async () => {
+  it("records an intentionally silent finalization separately from an empty one", async () => {
     const params = createFinalizationParams();
     const harness: AgentHarness = {
       id: "codex",
@@ -345,15 +344,16 @@ describe("AgentHarness lifecycle runner", () => {
     };
     const diagnostics = captureDiagnosticEvents();
     const result = {
-      assistant: { ...createFinalAssistant(), content: [] },
+      assistant: {
+        ...createFinalAssistant(),
+        content: [{ type: "text" as const, text: "NO_REPLY" }],
+      },
       usage: { input: 1, output: 0, total: 1 },
     };
 
     await expect(
-      runAgentHarnessLifecycleFinalization(harness, params, async () => {
-        throw new EmptySettledTurnFinalizationError(result);
-      }),
-    ).resolves.toMatchObject({ outcome: "empty", result });
+      runAgentHarnessLifecycleFinalization(harness, params, async () => result),
+    ).resolves.toMatchObject({ outcome: "silent", result });
     await flushDiagnosticEvents();
     diagnostics.unsubscribe();
 
