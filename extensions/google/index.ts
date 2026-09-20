@@ -10,7 +10,10 @@ import {
 } from "./generation-provider-metadata.js";
 import { geminiMemoryEmbeddingProviderAdapter } from "./memory-embedding-adapter.js";
 import { buildGoogleProvider } from "./provider-registration.js";
-import { createLazyGoogleRealtimeVoiceProvider } from "./realtime-voice-lazy.js";
+import {
+  createLazyGoogleRealtimeVoiceProvider,
+  createLazyGoogleVertexRealtimeVoiceProvider,
+} from "./realtime-voice-lazy.js";
 import { buildGoogleSpeechProvider } from "./speech-provider.js";
 import { createGeminiWebSearchProvider } from "./src/gemini-web-search-provider.js";
 
@@ -59,6 +62,7 @@ export default definePluginEntry({
       generateMusic: async (req) => (await loadGoogleMusicGenerationProvider()).generateMusic(req),
     });
     api.registerRealtimeVoiceProvider(createLazyGoogleRealtimeVoiceProvider());
+    api.registerRealtimeVoiceProvider(createLazyGoogleVertexRealtimeVoiceProvider());
     api.registerSpeechProvider(buildGoogleSpeechProvider());
     api.registerVideoGenerationProvider({
       ...createGoogleVideoGenerationProviderMetadata(),

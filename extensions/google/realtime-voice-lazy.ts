@@ -13,11 +13,23 @@ import {
   normalizeOptionalString,
 } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { resolveGoogleEnvApiKey } from "./gemini-auth.js";
-import { GOOGLE_REALTIME_VOICE_METADATA } from "./realtime-voice-metadata.js";
+import {
+  GOOGLE_REALTIME_VOICE_METADATA,
+  GOOGLE_VERTEX_REALTIME_VOICE_METADATA,
+} from "./realtime-voice-metadata.js";
+import {
+  isGoogleVertexRealtimeConfigured,
+  resolveGoogleVertexRealtimeConfigRecord,
+} from "./realtime-voice-vertex.js";
 
 const loadGoogleRealtimeVoiceProvider = createLazyRuntimeSurface(
   () => import("./realtime-voice-provider.js"),
   (mod) => mod.buildGoogleRealtimeVoiceProvider(),
+);
+
+const loadGoogleVertexRealtimeVoiceProvider = createLazyRuntimeSurface(
+  () => import("./realtime-voice-provider.js"),
+  (mod) => mod.buildGoogleVertexRealtimeVoiceProvider(),
 );
 
 function resolveGoogleRealtimeProviderConfig(
@@ -52,6 +64,7 @@ const GOOGLE_REALTIME_LAZY_MAX_PENDING_USER_MESSAGE_BYTES = 256 * 1024;
 
 function createLazyGoogleRealtimeVoiceBridge(
   req: RealtimeVoiceBridgeCreateRequest,
+  loadProvider: () => Promise<RealtimeVoiceProviderPlugin>,
 ): RealtimeVoiceBridge {
   let bridgeReady = false;
   let latestMediaTimestamp: number | undefined;
@@ -63,7 +76,7 @@ function createLazyGoogleRealtimeVoiceBridge(
   const lifecycle = createLazyRealtimeVoiceBridgeLifecycle({
     label: "Google",
     request: req,
-    load: async (request) => (await loadGoogleRealtimeVoiceProvider()).createBridge(request),
+    load: async (request) => (await loadProvider()).createBridge(request),
     clearPending: () => {
       bridgeReady = false;
       pendingAudio.clear();
@@ -195,7 +208,8 @@ export function createLazyGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPl
         normalizeOptionalString(cfg?.models?.providers?.google?.apiKey) ??
         resolveGoogleEnvApiKey(),
       ),
-    createBridge: createLazyGoogleRealtimeVoiceBridge,
+    createBridge: (req) =>
+      createLazyGoogleRealtimeVoiceBridge(req, loadGoogleRealtimeVoiceProvider),
     createBrowserSession: async (req) => {
       const provider = await loadGoogleRealtimeVoiceProvider();
       if (!provider.createBrowserSession) {
@@ -203,5 +217,15 @@ export function createLazyGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPl
       }
       return await provider.createBrowserSession(req);
     },
+  };
+}
+
+export function createLazyGoogleVertexRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin {
+  return {
+    ...GOOGLE_VERTEX_REALTIME_VOICE_METADATA,
+    resolveConfig: ({ rawConfig }) => resolveGoogleVertexRealtimeConfigRecord(rawConfig),
+    isConfigured: ({ providerConfig }) => isGoogleVertexRealtimeConfigured(providerConfig),
+    createBridge: (req) =>
+      createLazyGoogleRealtimeVoiceBridge(req, loadGoogleVertexRealtimeVoiceProvider),
   };
 }
