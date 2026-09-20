@@ -31,6 +31,9 @@ const CONSULT_TIMEOUT_MS = 120_000;
 // Matches the Control UI: past this many unanswered appends the link is saturated, and fresh
 // microphone audio is worth more than a growing backlog.
 const MAX_IN_FLIGHT_APPENDS = 8;
+// The relay rejects frames over 512 KiB of base64. The audio held since the wake can be far
+// larger, so big buffers go out as 4 s pieces (256 KiB of base64 each).
+const MAX_APPEND_BYTES = 24_000 * 2 * 4;
 
 type RelayEvent = { relaySessionId?: string; type?: string; [key: string]: unknown };
 
@@ -106,6 +109,12 @@ export class TalkRelaySession {
   }
 
   appendAudio(pcm24k: Buffer): void {
+    for (let offset = 0; offset < pcm24k.length; offset += MAX_APPEND_BYTES) {
+      this.appendFrame(pcm24k.subarray(offset, offset + MAX_APPEND_BYTES));
+    }
+  }
+
+  private appendFrame(pcm24k: Buffer): void {
     if (!this.sessionId || this.closed || this.inFlightAppends >= MAX_IN_FLIGHT_APPENDS) {
       return;
     }
