@@ -4,8 +4,6 @@
 export type WakeEngineConfig = {
   modelDir: string;
   phrases: string[];
-  threshold: number;
-  score: number;
 };
 
 export type WorkerInbound =
@@ -24,7 +22,7 @@ export type WorkerFatalReason =
   | "play-failed";
 
 export type WorkerOutbound =
-  | { t: "ready"; phrases: string[]; skippedPhrases: string[] }
+  | { t: "ready"; phrases: string[] }
   | { t: "wake"; phrase: string }
   | { t: "pcm"; pcm24k: Buffer }
   | { t: "drained"; id: number }

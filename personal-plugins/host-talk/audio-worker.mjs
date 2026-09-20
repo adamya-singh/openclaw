@@ -5,9 +5,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import { createRequire } from "node:module";
-import os from "node:os";
 import path from "node:path";
-import { encodeUnigramPhrase, loadUnigramPieces } from "./src/unigram-tokenizer.mjs";
+import { findWakePhrase } from "./src/wake-phrase-match.mjs";
 
 /** @typedef {import("./src/worker-protocol.ts").WorkerInbound} WorkerInbound */
 /** @typedef {import("./src/worker-protocol.ts").WorkerOutbound} WorkerOutbound */
@@ -38,6 +37,9 @@ function fatal(reason, detail) {
   process.exit(1);
 }
 
+// Wake detection is a small streaming recognizer plus fuzzy transcript matching (the approach the
+// Apple clients use). A keyword spotter was measured first and rejected: it caught under half of
+// clean "hey openclaw" samples at any sensitivity, because the wake word is an invented word.
 /** @param {WakeEngineConfig} config */
 function createWakeDetector(config) {
   const find = (prefix) => {
@@ -50,9 +52,7 @@ function createWakeDetector(config) {
     }
     return path.join(config.modelDir, match);
   };
-  const encoder = find("encoder");
-  const decoder = find("decoder");
-  const joiner = find("joiner");
+  const transducer = { encoder: find("encoder"), decoder: find("decoder"), joiner: find("joiner") };
 
   let sherpa;
   try {
@@ -61,63 +61,43 @@ function createWakeDetector(config) {
     fatal("sherpa-missing", String(error));
   }
 
-  const pieces = loadUnigramPieces(path.join(config.modelDir, "bpe.model"));
-  const phrases = [];
-  const skipped = [];
-  const lines = [];
-  for (const phrase of config.phrases) {
-    const tokens = encodeUnigramPhrase(pieces, phrase);
-    if (!tokens) {
-      skipped.push(phrase);
-      continue;
-    }
-    phrases.push(phrase);
-    lines.push(`${tokens.join(" ")} @${phrase.trim().replace(/\s+/g, "_")}`);
-  }
-  if (lines.length === 0) {
-    fatal("wake-init-failed", "no wake phrase could be tokenized for this model");
-  }
-  const keywordsFile = path.join(os.tmpdir(), `host-talk-keywords-${process.pid}.txt`);
-  fs.writeFileSync(keywordsFile, `${lines.join("\n")}\n`);
-
-  let spotter;
+  let recognizer;
   let stream;
   try {
-    spotter = new sherpa.KeywordSpotter({
+    recognizer = new sherpa.OnlineRecognizer({
       featConfig: { sampleRate: WAKE_RATE_HZ, featureDim: 80 },
       modelConfig: {
-        transducer: { encoder, decoder, joiner },
+        transducer,
         tokens: path.join(config.modelDir, "tokens.txt"),
         numThreads: 1,
         provider: "cpu",
         debug: 0,
       },
-      keywordsFile,
-      keywordsThreshold: config.threshold,
-      keywordsScore: config.score,
+      // Beam search spells the phrase far more consistently than greedy for ~1% more CPU.
+      decodingMethod: "modified_beam_search",
+      maxActivePaths: 4,
+      enableEndpoint: true,
+      rule1MinTrailingSilence: 1.2,
+      rule2MinTrailingSilence: 0.9,
+      rule3MinUtteranceLength: 12,
     });
-    stream = spotter.createStream();
+    stream = recognizer.createStream();
   } catch (error) {
     fatal("wake-init-failed", String(error));
   }
   return {
-    phrases,
-    skipped,
-    detector: {
-      /** @param {Float32Array} samples16k */
-      feed(samples16k) {
-        stream.acceptWaveform({ sampleRate: WAKE_RATE_HZ, samples: samples16k });
-        let hit;
-        while (spotter.isReady(stream)) {
-          spotter.decode(stream);
-          const keyword = spotter.getResult(stream).keyword;
-          if (keyword) {
-            hit = keyword.replace(/_/g, " ");
-            spotter.reset(stream);
-          }
-        }
-        return hit;
-      },
+    /** @param {Float32Array} samples16k */
+    feed(samples16k) {
+      stream.acceptWaveform({ sampleRate: WAKE_RATE_HZ, samples: samples16k });
+      while (recognizer.isReady(stream)) {
+        recognizer.decode(stream);
+      }
+      const phrase = findWakePhrase(recognizer.getResult(stream).text, config.phrases);
+      if (phrase || recognizer.isEndpoint(stream)) {
+        // After a hit the rest of the utterance is the question, not another wake.
+        recognizer.reset(stream);
+      }
+      return phrase;
     },
   };
 }
@@ -246,12 +226,11 @@ function shutdown() {
 process.on("message", (/** @type {WorkerInbound} */ message) => {
   switch (message.t) {
     case "configure": {
-      const wake = createWakeDetector(message.wake);
-      detector = wake.detector;
+      detector = createWakeDetector(message.wake);
       if (!recorder) {
         startRecorder();
       }
-      send({ t: "ready", phrases: wake.phrases, skippedPhrases: wake.skipped });
+      send({ t: "ready", phrases: message.wake.phrases });
       return;
     }
     case "stream":

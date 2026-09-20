@@ -7,7 +7,8 @@ import { HostTalkService } from "./src/host-talk-service.ts";
 import type { GatewayLink } from "./src/talk-relay-session.ts";
 import { WorkerSupervisor } from "./src/worker-supervisor.ts";
 
-const WAKE_MODEL = "sherpa-onnx-kws-zipformer-gigaspeech-3.3M-2024-01-01";
+const WAKE_MODEL = "sherpa-onnx-streaming-zipformer-en-20M-2023-02-17";
+const DEFAULT_WAKE_PHRASES = ["hey openclaw"];
 // read + talk run the relay; write lets voice consults use the agent's normal tools (the relay's
 // spoken-confirmation gate still guards high-impact actions). Never admin: this is a room mic.
 const LINK_SCOPES = ["operator.read", "operator.talk", "operator.write"];
@@ -29,20 +30,13 @@ type PluginApi = {
   ): void;
 };
 
-function numberSetting(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
-// "openclaw" alone is what the global list ships; people say "hey openclaw", so spot both.
-export function expandWakePhrases(triggers: readonly string[]): string[] {
-  const phrases = new Set<string>();
-  for (const trigger of triggers) {
-    const phrase = trigger.trim().toLowerCase();
-    if (!phrase) continue;
-    phrases.add(phrase);
-    if (!phrase.startsWith("hey ")) phrases.add(`hey ${phrase}`);
-  }
-  return [...phrases];
+// Deliberately NOT the Gateway's global voice-wake list: its defaults ("claude", "computer") are
+// everyday words, fine for a push-to-hold phone but false wakes on an always-on room microphone.
+function resolveWakePhrases(value: unknown): string[] {
+  const phrases = Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.trim() !== "")
+    : [];
+  return phrases.length > 0 ? phrases : DEFAULT_WAKE_PHRASES;
 }
 
 export default function register(api: PluginApi) {
@@ -72,16 +66,6 @@ export default function register(api: PluginApi) {
       const sessionKey = `agent:${agentId}:host-talk:${host}`;
       const listeners = new Set<(event: { event: string; payload?: unknown }) => void>();
 
-      const configureWake = (triggers: unknown) => {
-        const list = Array.isArray(triggers) ? triggers.filter((t) => typeof t === "string") : [];
-        supervisor?.configure({
-          modelDir: path.join(ctx.stateDir, "tools", "host-talk", "models", WAKE_MODEL),
-          phrases: expandWakePhrases(list.length > 0 ? list : ["openclaw"]),
-          threshold: numberSetting(settings.wakeThreshold, 0.25),
-          score: numberSetting(settings.wakeScore, 1.5),
-        });
-      };
-
       const auth = resolveGatewayAuth({ authConfig: cfg.gateway?.auth, env: process.env });
       const gateway = new GatewayClient({
         url: `ws://127.0.0.1:${resolveGatewayPort(cfg)}`,
@@ -94,13 +78,6 @@ export default function register(api: PluginApi) {
         clientDisplayName: "host-talk",
         onHelloOk: () => {
           linkState = "connected";
-          gateway
-            .request<{ triggers?: unknown }>("voicewake.get", {})
-            .then((result) => configureWake(result?.triggers))
-            .catch((error: unknown) => {
-              log(`host-talk: voicewake.get failed (${String(error)}); using the default phrase`);
-              configureWake(undefined);
-            });
         },
         onConnectError: (error: Error) => {
           linkState = `connect error: ${error.message}`;
@@ -111,9 +88,6 @@ export default function register(api: PluginApi) {
           service?.dispatch({ type: "session-lost" });
         },
         onEvent: (event: { event: string; payload?: unknown }) => {
-          if (event.event === "voicewake.changed") {
-            configureWake((event.payload as { triggers?: unknown } | undefined)?.triggers);
-          }
           for (const listener of listeners) listener(event);
         },
       });
@@ -137,6 +111,10 @@ export default function register(api: PluginApi) {
         sessionKey,
         sendToWorker: (message) => supervisor?.send(message),
         log,
+      });
+      supervisor.configure({
+        modelDir: path.join(ctx.stateDir, "tools", "host-talk", "models", WAKE_MODEL),
+        phrases: resolveWakePhrases(settings.wakePhrases),
       });
       gateway.start();
       log(`host-talk: listening for the wake word; voice session ${sessionKey}`);

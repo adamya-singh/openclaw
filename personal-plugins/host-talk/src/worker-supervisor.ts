@@ -19,7 +19,7 @@ const MAX_BACKOFF_MS = 60_000;
 
 export type WorkerStatus =
   | { kind: "starting" }
-  | { kind: "ready"; phrases: string[]; skippedPhrases: string[]; rssBytes?: number }
+  | { kind: "ready"; phrases: string[]; rssBytes?: number }
   | { kind: "restarting"; detail: string }
   | { kind: "unavailable"; reason: WorkerFatalReason; detail: string };
 
@@ -110,11 +110,7 @@ export class WorkerSupervisor {
     this.armHeartbeat();
     if (message.t === "ready") {
       this.restarts = 0;
-      this.status = {
-        kind: "ready",
-        phrases: message.phrases,
-        skippedPhrases: message.skippedPhrases,
-      };
+      this.status = { kind: "ready", phrases: message.phrases };
     } else if (message.t === "heartbeat") {
       if (this.status.kind === "ready") {
         this.status = { ...this.status, rssBytes: message.rssBytes };
