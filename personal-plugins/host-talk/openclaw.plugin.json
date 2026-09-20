@@ -11,17 +11,10 @@
         "type": "string",
         "description": "Agent that owns the voice session. Default \"main\"."
       },
-      "wakeThreshold": {
-        "type": "number",
-        "minimum": 0.01,
-        "maximum": 1,
-        "description": "Wake-word trigger threshold; lower is more sensitive. Default 0.25."
-      },
-      "wakeScore": {
-        "type": "number",
-        "minimum": 0,
-        "maximum": 10,
-        "description": "Wake-word boosting score; higher is more sensitive. Default 1.5."
+      "wakePhrases": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Wake phrases for this host's microphone. Default [\"hey openclaw\"]. Invented words are matched fuzzily; avoid everyday words."
       }
     }
   }
