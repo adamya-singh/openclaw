@@ -20,8 +20,10 @@ const WAKE_RATE_HZ = 16_000;
 const CAPTURE_SETTLE_BYTES = CAPTURE_RATE_HZ * 2;
 // Covers "hey openclaw, <question>" spoken while the relay session is still connecting.
 const PREROLL_BYTES = RELAY_RATE_HZ * 2 * 3;
-const SPEECH_RMS_THRESHOLD = 1200;
-const SPEECH_EVENT_INTERVAL_MS = 300;
+// Laptop mics carry most of their noise as rumble below the speech band; a one-pole high-pass
+// lifts SNR for both the wake engine and the provider's end-of-speech detection.
+const HIGH_PASS_HZ = 150;
+const HIGH_PASS_ALPHA = 1 / (1 + (2 * Math.PI * HIGH_PASS_HZ) / CAPTURE_RATE_HZ);
 // pw-play buffers ahead of the speaker; drained means "heard", not merely "written".
 const PLAYBACK_LATENCY_MS = 250;
 const RECORD_RESTART_LIMIT = 5;
@@ -125,7 +127,8 @@ let streaming = false;
 let preroll = Buffer.alloc(0);
 let captureCarry = Buffer.alloc(0);
 let settleRemaining = CAPTURE_SETTLE_BYTES;
-let lastSpeechEventAt = 0;
+let highPassPrevIn = 0;
+let highPassPrevOut = 0;
 let recorder;
 let recordRestarts = 0;
 let player;
@@ -150,18 +153,19 @@ function handleCapture(chunk) {
   }
   const wake = new Float32Array(frames * 2);
   const relay = Buffer.alloc(frames * 3 * 2);
-  let sumSquares = 0;
   for (let f = 0; f < frames; f += 1) {
     const s = [];
     for (let i = 0; i < 6; i += 1) {
-      s.push(buf.readInt16LE(f * 12 + i * 2));
+      const input = buf.readInt16LE(f * 12 + i * 2);
+      highPassPrevOut = HIGH_PASS_ALPHA * (highPassPrevOut + input - highPassPrevIn);
+      highPassPrevIn = input;
+      s.push(highPassPrevOut);
     }
     wake[f * 2] = (s[0] + s[1] + s[2]) / 3 / 32768;
     wake[f * 2 + 1] = (s[3] + s[4] + s[5]) / 3 / 32768;
     for (let i = 0; i < 3; i += 1) {
       const v = Math.round((s[i * 2] + s[i * 2 + 1]) / 2);
-      relay.writeInt16LE(v, (f * 3 + i) * 2);
-      sumSquares += v * v;
+      relay.writeInt16LE(Math.max(-32768, Math.min(32767, v)), (f * 3 + i) * 2);
     }
   }
 
@@ -172,12 +176,6 @@ function handleCapture(chunk) {
 
   if (streaming) {
     send({ t: "pcm", pcm24k: relay });
-    const rms = Math.sqrt(sumSquares / (frames * 3));
-    const now = Date.now();
-    if (rms > SPEECH_RMS_THRESHOLD && now - lastSpeechEventAt > SPEECH_EVENT_INTERVAL_MS) {
-      lastSpeechEventAt = now;
-      send({ t: "speech" });
-    }
     return;
   }
   // Privacy: outside an active session, audio only ever lives in this ring buffer.

@@ -14,6 +14,11 @@ export type TalkRelayCallbacks = {
   onClear(): void;
   /** Ack only after local playback drains past this chunk, or the provider over-runs us. */
   onMark(markName: string): void;
+  /**
+   * The provider is transcribing user speech right now. Mic energy is not used for this:
+   * a noisy microphone sits above any fixed threshold and would hold sessions open forever.
+   */
+  onUserSpeech(): void;
   onUserTranscript(text: string): void;
   /** Provider finished the reply and no agent consult is in flight. Playback may still drain. */
   onReplyIdle(): void;
@@ -165,9 +170,14 @@ export class TalkRelaySession {
         }
         return;
       case "transcript":
-        if (relay.role === "user" && relay.final === true && typeof relay.text === "string") {
+        if (relay.role !== "user" || typeof relay.text !== "string") {
+          return;
+        }
+        if (relay.final === true) {
           this.providerDone = false;
           this.callbacks.onUserTranscript(relay.text);
+        } else {
+          this.callbacks.onUserSpeech();
         }
         return;
       case "audioDone":
