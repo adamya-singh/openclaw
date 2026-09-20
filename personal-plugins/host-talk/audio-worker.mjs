@@ -17,8 +17,11 @@ const RELAY_RATE_HZ = 24_000;
 const WAKE_RATE_HZ = 16_000;
 // The codec emits a DC settle transient for about a second after a capture stream starts.
 const CAPTURE_SETTLE_BYTES = CAPTURE_RATE_HZ * 2;
-// Covers "hey openclaw, <question>" spoken while the relay session is still connecting.
+// Idle ring: how much audio before the wake is kept, so the wake phrase itself is included.
 const PREROLL_BYTES = RELAY_RATE_HZ * 2 * 3;
+// After a wake the ring stops trimming until the session streams: "hey openclaw, <question>" is
+// spoken while the relay is still connecting, and connecting can take several seconds.
+const WAKE_HOLD_BYTES = RELAY_RATE_HZ * 2 * 25;
 // Laptop mics carry most of their noise as rumble below the speech band; a one-pole high-pass
 // lifts SNR for both the wake engine and the provider's end-of-speech detection.
 const HIGH_PASS_HZ = 150;
@@ -105,6 +108,7 @@ function createWakeDetector(config) {
 let detector;
 let streaming = false;
 let preroll = Buffer.alloc(0);
+let holdingSinceWake = false;
 let captureCarry = Buffer.alloc(0);
 let settleRemaining = CAPTURE_SETTLE_BYTES;
 let highPassPrevIn = 0;
@@ -151,6 +155,7 @@ function handleCapture(chunk) {
 
   const phrase = detector?.feed(wake);
   if (phrase) {
+    holdingSinceWake = !streaming;
     send({ t: "wake", phrase });
   }
 
@@ -160,7 +165,10 @@ function handleCapture(chunk) {
   }
   // Privacy: outside an active session, audio only ever lives in this ring buffer.
   preroll = Buffer.concat([preroll, relay]);
-  if (preroll.length > PREROLL_BYTES) {
+  const limit = holdingSinceWake ? WAKE_HOLD_BYTES : PREROLL_BYTES;
+  if (preroll.length > limit) {
+    // Overflowing the hold means the session never came: fall back to the idle ring.
+    holdingSinceWake = false;
     preroll = Buffer.from(preroll.subarray(preroll.length - PREROLL_BYTES));
   }
 }
@@ -239,6 +247,7 @@ process.on("message", (/** @type {WorkerInbound} */ message) => {
         send({ t: "pcm", pcm24k: preroll });
       }
       preroll = Buffer.alloc(0);
+      holdingSinceWake = false;
       return;
     case "play":
       play(Buffer.from(message.pcm24k));

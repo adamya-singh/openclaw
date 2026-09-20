@@ -65,6 +65,9 @@ export class TalkRelaySession {
   private inFlightAppends = 0;
   private providerDone = true;
   private readonly consultAborts = new Map<string, AbortController>();
+  // Relay events can outrun the create response (a warm provider is ready in under a second),
+  // so events seen before the session id is known are held and replayed, never dropped.
+  private earlyEvents: RelayEvent[] | undefined = [];
   private readonly link: GatewayLink;
   private readonly sessionKey: string;
   private readonly callbacks: TalkRelayCallbacks;
@@ -95,6 +98,11 @@ export class TalkRelaySession {
       return;
     }
     this.sessionId = created.sessionId;
+    const early = this.earlyEvents ?? [];
+    this.earlyEvents = undefined;
+    for (const relay of early) {
+      this.handleRelayEvent(relay);
+    }
   }
 
   appendAudio(pcm24k: Buffer): void {
@@ -148,7 +156,18 @@ export class TalkRelaySession {
       return;
     }
     const relay = asRecord(event.payload) as RelayEvent | undefined;
-    if (!relay || !this.sessionId || relay.relaySessionId !== this.sessionId) {
+    if (!relay) {
+      return;
+    }
+    if (this.earlyEvents) {
+      this.earlyEvents.push(relay);
+      return;
+    }
+    this.handleRelayEvent(relay);
+  }
+
+  private handleRelayEvent(relay: RelayEvent): void {
+    if (this.closed || relay.relaySessionId !== this.sessionId) {
       return;
     }
     switch (relay.type) {
