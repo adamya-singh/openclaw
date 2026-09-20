@@ -9,7 +9,7 @@ import {
 } from "./realtime-voice-vertex.js";
 
 const { connectMock, createGoogleGenAIMock } = vi.hoisted(() => {
-  const connectMockLocal = vi.fn(async (_params: { model: string }) => ({
+  const connectMockLocal = vi.fn(async (_params: { model: string; config?: unknown }) => ({
     close: vi.fn(),
     sendClientContent: vi.fn(),
     sendRealtimeInput: vi.fn(),
@@ -138,6 +138,31 @@ describe("Google Vertex realtime voice", () => {
       httpOptions: { apiVersion: "v1" },
     });
     expect(connectMock.mock.calls[0]?.[0].model).toBe("custom-live-model");
+  });
+
+  it("keeps tool calling sequential because Vertex Live rejects willContinue", async () => {
+    const bridge = buildGoogleVertexRealtimeVoiceProvider().createBridge({
+      providerConfig: { project: "cfg-project", location: "us-central1" },
+      tools: [
+        {
+          type: "function",
+          name: "openclaw_agent_consult",
+          description: "Ask the agent.",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      ],
+      onAudio: vi.fn(),
+      onClearAudio: vi.fn(),
+    });
+    await bridge.connect();
+
+    expect(bridge.supportsToolResultContinuation).toBe(false);
+    const connectParams = connectMock.mock.calls[0]?.[0] as {
+      config?: { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+    };
+    const declaration = connectParams.config?.tools?.[0]?.functionDeclarations?.[0];
+    expect(declaration?.name).toBe("openclaw_agent_consult");
+    expect(declaration).not.toHaveProperty("behavior");
   });
 
   it("fails bridge creation with the missing project and location named", () => {

@@ -165,6 +165,12 @@ function createGoogleRealtimeClient(
   });
 }
 
+// Vertex Live rejects the async function-calling fields: a tool response carrying
+// willContinue closes the socket with 1007 "Unknown name", so Vertex stays sequential.
+function resolveAsyncFunctionCalling(model: string, authKind: GoogleRealtimeAuth["kind"]): boolean {
+  return authKind !== "vertex" && supportsAsyncFunctionCalling(model);
+}
+
 function buildRealtimeInputConfig(
   config: GoogleRealtimeLiveConfig,
 ): RealtimeInputConfig | undefined {
@@ -234,11 +240,9 @@ function buildFunctionDeclarations(
 function buildGoogleLiveConnectConfig(
   config: GoogleRealtimeLiveConfig,
   model: string,
+  asyncFunctionCalling: boolean,
 ): LiveConnectConfig {
-  const functionDeclarations = buildFunctionDeclarations(
-    config.tools,
-    supportsAsyncFunctionCalling(model),
-  );
+  const functionDeclarations = buildFunctionDeclarations(config.tools, asyncFunctionCalling);
   const realtimeInputConfig = buildRealtimeInputConfig(config);
   const thinkingConfig = buildThinkingConfig(config, model);
   return {
@@ -359,7 +363,8 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
   constructor(private readonly config: GoogleRealtimeVoiceBridgeConfig) {
     this.audioFormat = config.audioFormat ?? REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ;
     this.model = config.model ?? GOOGLE_REALTIME_DEFAULT_MODEL;
-    this.supportsToolResultContinuation = modelSupportsToolResultContinuation(this.model);
+    this.supportsToolResultContinuation =
+      config.auth.kind !== "vertex" && modelSupportsToolResultContinuation(this.model);
   }
 
   async connect(): Promise<void> {
@@ -409,7 +414,11 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
       const session = await ai.live.connect({
         model: this.model,
         config: {
-          ...buildGoogleLiveConnectConfig(this.config, this.model),
+          ...buildGoogleLiveConnectConfig(
+            this.config,
+            this.model,
+            resolveAsyncFunctionCalling(this.model, this.config.auth.kind),
+          ),
           ...(this.config.sessionResumption === false
             ? {}
             : {
@@ -1176,6 +1185,7 @@ async function createGoogleRealtimeBrowserSession(
             tools: req.tools,
           },
           model,
+          supportsAsyncFunctionCalling(model),
         ),
       },
     },
