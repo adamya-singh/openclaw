@@ -167,8 +167,13 @@ function isGemini31LiveModel(model: string): boolean {
   return modelId.startsWith("gemini-3.1-") && modelId.includes("-live");
 }
 
-function supportsAsyncFunctionCalling(model: string): boolean {
-  return !isGemini31LiveModel(model);
+// Vertex Live rejects the async function-calling fields: a tool response carrying
+// willContinue closes the socket with 1007 "Unknown name", so Vertex stays sequential.
+function supportsAsyncFunctionCalling(
+  model: string,
+  authKind: GoogleRealtimeAuth["kind"],
+): boolean {
+  return authKind !== "vertex" && !isGemini31LiveModel(model);
 }
 
 function buildThinkingConfig(
@@ -260,11 +265,9 @@ function buildFunctionDeclarations(
 function buildGoogleLiveConnectConfig(
   config: GoogleRealtimeLiveConfig,
   model: string,
+  asyncFunctionCalling: boolean,
 ): LiveConnectConfig {
-  const functionDeclarations = buildFunctionDeclarations(
-    config.tools,
-    supportsAsyncFunctionCalling(model),
-  );
+  const functionDeclarations = buildFunctionDeclarations(config.tools, asyncFunctionCalling);
   const realtimeInputConfig = buildRealtimeInputConfig(config);
   const thinkingConfig = buildThinkingConfig(config, model);
   return {
@@ -402,7 +405,10 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
   constructor(private readonly config: GoogleRealtimeVoiceBridgeConfig) {
     this.audioFormat = config.audioFormat ?? REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ;
     this.model = config.model ?? GOOGLE_REALTIME_DEFAULT_MODEL;
-    this.supportsToolResultContinuation = supportsAsyncFunctionCalling(this.model);
+    this.supportsToolResultContinuation = supportsAsyncFunctionCalling(
+      this.model,
+      config.auth.kind,
+    );
   }
 
   async connect(): Promise<void> {
@@ -455,7 +461,11 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
       const session = await ai.live.connect({
         model: this.model,
         config: {
-          ...buildGoogleLiveConnectConfig(this.config, this.model),
+          ...buildGoogleLiveConnectConfig(
+            this.config,
+            this.model,
+            this.supportsToolResultContinuation,
+          ),
           ...(this.config.sessionResumption === false
             ? {}
             : {
@@ -1251,6 +1261,7 @@ async function createGoogleRealtimeBrowserSession(
             tools: req.tools,
           },
           model,
+          supportsAsyncFunctionCalling(model, "api-key"),
         ),
       },
     },
