@@ -1,0 +1,28 @@
+{
+  "id": "host-talk",
+  "name": "Host Talk",
+  "description": "Hey-openclaw wake word and live voice conversations on the Gateway host's own microphone and speakers.",
+  "activation": { "onStartup": true },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "agentId": {
+        "type": "string",
+        "description": "Agent that owns the voice session. Default \"main\"."
+      },
+      "wakeThreshold": {
+        "type": "number",
+        "minimum": 0.01,
+        "maximum": 1,
+        "description": "Wake-word trigger threshold; lower is more sensitive. Default 0.25."
+      },
+      "wakeScore": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 10,
+        "description": "Wake-word boosting score; higher is more sensitive. Default 1.5."
+      }
+    }
+  }
+}
