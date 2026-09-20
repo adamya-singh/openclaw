@@ -62,6 +62,40 @@ describe("resolveSettledTurnFinalizationRequest", () => {
     ).toBeNull();
   });
 
+  it("accepts the silent token the cron preamble offers, but not a blank required turn", () => {
+    const request = (text: string, trigger: "cron" | "user") => {
+      const assistant = buildEmbeddedRunnerAssistant({ content: [{ type: "text", text }] });
+      const attempt = makeEmbeddedRunnerAttempt({
+        assistantTexts: text ? [text] : [],
+        lastAssistant: assistant,
+        currentAttemptAssistant: assistant,
+        toolMetas: [{ toolName: "exec", meta: "get-requests", replaySafe: false }],
+        itemLifecycle: { startedCount: 1, completedCount: 1, activeCount: 0 },
+        currentAttemptReplayMetadata: { hadPotentialSideEffects: true, replaySafe: false },
+      });
+      return resolveSettledTurnFinalizationRequest({
+        runParams: {
+          sessionId: "session:cron-silent",
+          runId: "run:cron-silent",
+          trigger,
+          terminalReplyExpectation: "required",
+        } as never,
+        attempt,
+        activeErrorContext: { provider: "google-vertex", model: "gemini-3.6-flash" },
+        modelApi: "google-vertex",
+        executionContract: undefined,
+        payloadsWithToolMedia: [],
+        hasTerminalToolPresentation: false,
+        terminalState: resolveEmbeddedRunAttemptTerminalState({ attempt, assistant }),
+        settledTurnFinalizationAvailable: true,
+      });
+    };
+
+    expect(request("NO_REPLY", "cron")).toBeNull();
+    expect(request("", "cron")).toBe(SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION);
+    expect(request("NO_REPLY", "user")).toBe(SETTLED_TOOL_TERMINAL_CONTINUATION_INSTRUCTION);
+  });
+
   it("requires an available finalizer and no visible structured error", () => {
     const assistant = buildEmbeddedRunnerAssistant({
       stopReason: "toolUse",

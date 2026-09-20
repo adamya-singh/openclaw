@@ -140,6 +140,7 @@ export function resolveSettledTurnFinalizationRequest(input: {
     : preparedPayloadCount || (silentToolResultReplyPayload ? 1 : 0);
   const emptyAssistantReplyIsSilent = shouldTreatEmptyAssistantReplyAsSilent({
     terminalReplyExpectation: resolveReplyExpectation(input.runParams),
+    hostInvitedSilentToken: input.runParams.trigger === "cron",
     payloadCount,
     aborted: terminalAborted,
     timedOut: terminalTimedOut,
@@ -254,6 +255,7 @@ export async function resolveEmbeddedRunTerminal(input: {
   const settledTurnFinalizationAttempted = input.settledTurnFinalizationOutcome !== "not-attempted";
   const emptyAssistantReplyIsSilent = shouldTreatEmptyAssistantReplyAsSilent({
     terminalReplyExpectation: resolveReplyExpectation(runParams),
+    hostInvitedSilentToken: runParams.trigger === "cron",
     payloadCount,
     aborted: terminalAborted,
     timedOut: terminalTimedOut,

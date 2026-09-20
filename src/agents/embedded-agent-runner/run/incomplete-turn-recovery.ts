@@ -123,16 +123,22 @@ export function shouldTreatEmptyAssistantReplyAsSilent(params: {
   allowEmptyAssistantReplyAsSilent?: boolean;
   onlyExplicitSilentReply?: boolean;
   terminalReplyExpectation?: "required" | "optional";
+  /** The host prompt itself offered the silent token (the cron unattended-run preamble). */
+  hostInvitedSilentToken?: boolean;
   payloadCount: number;
   aborted: boolean;
   timedOut: boolean;
   attempt: IncompleteTurnAttempt;
 }): boolean {
+  const assistant = classifyAssistantTurn(params);
+  // An explicit token answers the host's own offer, so it completes even a
+  // required reply. A blank turn made no such choice and still owes a payload.
   const completion = resolveReplyCompletion(
-    resolveReplyExpectation(params),
+    params.hostInvitedSilentToken && assistant.silent
+      ? "optional"
+      : resolveReplyExpectation(params),
     params.payloadCount === 0 ? "empty" : "ready",
   );
-  const assistant = classifyAssistantTurn(params);
   return (
     completion.outcome === "silent" &&
     !shouldSkipNonVisibleTurnRetry({ ...params, tolerateSideEffects: true }) &&

@@ -421,6 +421,7 @@ export function completeEmbeddedAttemptResult(
     (silentToolResultReplyPayload ? 1 : 0);
   const emptyAssistantReplyIsSilent = shouldTreatEmptyAssistantReplyAsSilent({
     terminalReplyExpectation: resolveReplyExpectation(attempt),
+    hostInvitedSilentToken: attempt.trigger === "cron",
     payloadCount: 0,
     aborted: terminal.aborted,
     timedOut: terminal.timedOut,
