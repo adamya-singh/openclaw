@@ -187,6 +187,17 @@ test("drops mic frames when the link is saturated and after close", async () => 
   assert.equal(h.requests.at(-1)?.method, "talk.session.close");
 });
 
+test("audio held since the wake is split under the relay frame limit", async () => {
+  const h = createHarness();
+  await h.session.open();
+  h.session.appendAudio(Buffer.alloc(24_000 * 2 * 13));
+  const frames = h.requests.filter((r) => r.method === "talk.session.appendAudio");
+  assert.equal(frames.length, 4);
+  for (const frame of frames) {
+    assert.ok(frame.params.audioBase64.length <= 512 * 1024, "frame fits the relay limit");
+  }
+});
+
 test("relay close is reported as lost exactly once", async () => {
   const h = createHarness();
   await h.session.open();
