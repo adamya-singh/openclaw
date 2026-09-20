@@ -1,0 +1,14 @@
+{
+  "name": "host-talk",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  },
+  "dependencies": {
+    "sherpa-onnx-node": "1.13.8"
+  }
+}
