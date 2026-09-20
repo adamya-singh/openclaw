@@ -27,7 +27,6 @@ export type WorkerOutbound =
   | { t: "ready"; phrases: string[]; skippedPhrases: string[] }
   | { t: "wake"; phrase: string }
   | { t: "pcm"; pcm24k: Buffer }
-  | { t: "speech" }
   | { t: "drained"; id: number }
   | { t: "heartbeat"; rssBytes: number }
   | { t: "fatal"; reason: WorkerFatalReason; detail: string };

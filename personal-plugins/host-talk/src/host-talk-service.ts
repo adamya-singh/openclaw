@@ -58,9 +58,6 @@ export class HostTalkService {
       case "pcm":
         this.session?.appendAudio(Buffer.from(message.pcm24k));
         return;
-      case "speech":
-        this.dispatch({ type: "user-speech" });
-        return;
       case "drained":
         this.drains.get(message.id)?.();
         this.drains.delete(message.id);
@@ -132,6 +129,7 @@ export class HostTalkService {
         this.ifCurrent(session, () =>
           this.afterPlaybackDrains(() => session.acknowledgeMark(markName)),
         ),
+      onUserSpeech: () => this.ifCurrent(session, () => this.dispatch({ type: "user-speech" })),
       onUserTranscript: (text) =>
         this.ifCurrent(session, () => this.dispatch({ type: "user-transcript", text })),
       onReplyIdle: () =>
