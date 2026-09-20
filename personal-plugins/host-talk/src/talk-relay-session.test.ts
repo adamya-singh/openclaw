@@ -23,6 +23,7 @@ function createHarness(handlers: Record<string, (params: any) => unknown> = {}) 
     onAudio: (pcm) => seen.push(`audio:${pcm.length}`),
     onClear: () => seen.push("clear"),
     onMark: (mark) => seen.push(`mark:${mark}`),
+    onUserSpeech: () => seen.push("speech"),
     onUserTranscript: (text) => seen.push(`user:${text}`),
     onReplyIdle: () => seen.push("idle"),
     onLost: (reason) => seen.push(`lost:${reason}`),
