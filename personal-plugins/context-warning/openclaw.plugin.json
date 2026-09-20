@@ -1,0 +1,21 @@
+{
+  "id": "context-warning",
+  "name": "Context Warning",
+  "description": "Warns once in chat, with Reset and Compact buttons, when a session's context grows past a token threshold.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "thresholdTokens": {
+        "type": "number",
+        "minimum": 1000,
+        "description": "Warn when the last model call used more than this many context tokens. Default 100000."
+      },
+      "channels": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Channel ids that get the warning. Default [\"telegram\"]."
+      }
+    }
+  }
+}
