@@ -956,7 +956,7 @@
     "embeddingProviders": ["gemini"],
     "imageGenerationProviders": ["google"],
     "musicGenerationProviders": ["google"],
-    "realtimeVoiceProviders": ["google"],
+    "realtimeVoiceProviders": ["google", "google-vertex"],
     "speechProviders": ["google"],
     "videoGenerationProviders": ["google"],
     "webSearchProviders": ["gemini"]
