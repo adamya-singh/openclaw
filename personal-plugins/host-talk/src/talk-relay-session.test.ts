@@ -49,6 +49,21 @@ test("creates a realtime relay session on its own session key", async () => {
   });
 });
 
+test("a ready event that outruns the create response is replayed, not dropped", async () => {
+  let finishCreate: ((value: unknown) => void) | undefined;
+  const h = createHarness({
+    "talk.session.create": () => new Promise((resolve) => (finishCreate = resolve)),
+  });
+  const opening = h.session.open();
+  await h.settle();
+  h.relay({ type: "ready" });
+  h.emit("talk.event", { relaySessionId: "someone-else", type: "ready" });
+  assert.deepEqual(h.seen, []);
+  finishCreate?.({ sessionId: "relay-1" });
+  await opening;
+  assert.deepEqual(h.seen, ["ready"]);
+});
+
 test("routes relay events and ignores other sessions and non-final transcripts", async () => {
   const h = createHarness();
   await h.session.open();

@@ -31,6 +31,7 @@ export class HostTalkService {
   private readonly drains = new Map<number, () => void>();
   private lastOutcome: HostTalkSnapshot["lastOutcome"];
   private wakes = 0;
+  private openedAtMs = 0;
   private readonly deps: HostTalkServiceDeps;
 
   constructor(deps: HostTalkServiceDeps) {
@@ -117,8 +118,13 @@ export class HostTalkService {
   }
 
   private openSession(): void {
+    this.openedAtMs = Date.now();
     const session: TalkRelaySession = new TalkRelaySession(this.deps.link, this.deps.sessionKey, {
-      onReady: () => this.ifCurrent(session, () => this.dispatch({ type: "session-ready" })),
+      onReady: () =>
+        this.ifCurrent(session, () => {
+          this.deps.log(`host-talk: voice session ready in ${Date.now() - this.openedAtMs} ms`);
+          this.dispatch({ type: "session-ready" });
+        }),
       onAudio: (pcm24k) =>
         this.ifCurrent(session, () => {
           this.dispatch({ type: "assistant-audio" });
