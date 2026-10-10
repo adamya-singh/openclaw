@@ -35,6 +35,7 @@ describe("check-package-patches", () => {
   it("allows approved pnpm patches together", () => {
     const approvedPatches = [
       ["@awesome.me/webawesome@3.13.0", "patches/@awesome.me__webawesome@3.13.0.patch"],
+      ["playwright-core@1.63.0", "patches/playwright-core@1.63.0.patch"],
       ["baileys@7.0.0-rc12", "patches/baileys@7.0.0-rc12.patch"],
       ["baileys@7.0.0-rc13", "patches/baileys@7.0.0-rc13.patch"],
       ["baileys@7.0.0-rc14", "patches/baileys@7.0.0-rc14.patch"],
