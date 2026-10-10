@@ -1,3 +1,5 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCleanupTempDirTracker } from "../../test-support.js";
@@ -6,6 +8,7 @@ import { getPlaywrightCore } from "./playwright-core.runtime.js";
 import {
   closePlaywrightBrowserConnection,
   getMainFrameDocumentIdentityViaPlaywright,
+  getPageForTargetId,
   refLocator,
   restoreRoleRefsForTarget,
 } from "./pw-session.js";
@@ -24,6 +27,115 @@ const tempDirs = useAutoCleanupTempDirTracker(afterEach);
 describe.runIf(process.env.OPENCLAW_BROWSER_SNAPSHOT_E2E === "1")(
   "Chromium snapshot-to-action name fidelity",
   () => {
+    it("reconnects to preloaded OOPIF descendants with usable execution and utility worlds", async () => {
+      const rootDir = tempDirs.make("openclaw-preloaded-frame-tree-");
+      const server = createServer((request, response) => {
+        response.setHeader("content-type", "text/html");
+        if (request.url === "/launch") {
+          response.end('<h1>Launch</h1><iframe src="/reading"></iframe>');
+        } else if (request.url === "/reading") {
+          response.end('<p>Reading passage</p><iframe src="/sidebar"></iframe>');
+        } else if (request.url === "/sidebar") {
+          response.end(
+            "<textarea aria-label=\"Response\"></textarea><button onclick=\"document.querySelector('output').textContent=document.querySelector('textarea').value\">Preview</button><output></output>",
+          );
+        } else if (request.url === "/local") {
+          response.end('<iframe srcdoc="<button>Local control</button>"></iframe>');
+        } else {
+          const port = (server.address() as AddressInfo).port;
+          response.end(`<h1>Main</h1><iframe src="http://localhost:${port}/launch"></iframe>`);
+        }
+      });
+      await new Promise<void>((resolve) => {
+        server.listen(0, resolve);
+      });
+      const port = (server.address() as AddressInfo).port;
+      const cdpPort = await getFreePort();
+      const cdpUrl = `http://127.0.0.1:${cdpPort}`;
+      let context: import("playwright-core").BrowserContext | undefined;
+      try {
+        context = await getPlaywrightCore().chromium.launchPersistentContext(
+          path.join(rootDir, "profile"),
+          {
+            headless: true,
+            executablePath: process.env.PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH,
+            args: [`--remote-debugging-port=${cdpPort}`, "--site-per-process", "--no-proxy-server"],
+          },
+        );
+        const page = context.pages()[0] ?? (await context.newPage());
+        const rootUrl = `http://127.0.0.1:${port}/`;
+        const sidebarUrl = `http://localhost:${port}/sidebar`;
+        const session = await context.newCDPSession(page);
+        const { targetInfo } = await session.send("Target.getTargetInfo");
+        await session.detach();
+        const target = { cdpUrl, targetId: targetInfo.targetId };
+
+        // Exercise initial empty-page attachment as well as an already-loaded tree.
+        expect((await getPageForTargetId(target)).url()).toBe("about:blank");
+        await closePlaywrightBrowserConnection({ cdpUrl });
+        await page.goto(rootUrl);
+        await page
+          .frameLocator("iframe")
+          .frameLocator("iframe")
+          .frameLocator("iframe")
+          .getByRole("textbox", { name: "Response" })
+          .waitFor();
+
+        for (let connection = 0; connection < 2; connection++) {
+          const attached = await getPageForTargetId(target);
+          expect(attached.frames()).toHaveLength(4);
+          expect(new Set(attached.frames()).size).toBe(4);
+          for (const frame of attached.frames()) {
+            await frame.waitForLoadState("domcontentloaded", { timeout: 2_000 });
+            await frame.waitForLoadState("load", { timeout: 2_000 });
+            expect(await frame.evaluate(() => location.href)).toBe(frame.url());
+          }
+          const reading = attached.frames().find((frame) => frame.url().endsWith("/reading"))!;
+          const sidebar = attached.frames().find((frame) => frame.url() === sidebarUrl)!;
+          expect(sidebar.parentFrame()).toBe(reading);
+          expect(reading.parentFrame()?.url()).toBe(`http://localhost:${port}/launch`);
+          expect(await reading.getByText("Reading passage").textContent()).toBe("Reading passage");
+          await sidebar.getByRole("textbox", { name: "Response" }).fill(`response ${connection}`);
+          await sidebar.getByRole("button", { name: "Preview" }).click();
+          expect(await sidebar.locator("output").textContent()).toBe(`response ${connection}`);
+
+          await attached.goto(`${rootUrl}local`);
+          await attached
+            .frameLocator("iframe")
+            .getByRole("button", { name: "Local control" })
+            .waitFor();
+          expect(sidebar.isDetached()).toBe(true);
+          expect(attached.frames()).toHaveLength(2);
+          await attached
+            .frameLocator("iframe")
+            .getByRole("button", { name: "Local control" })
+            .click();
+          await attached.goto(rootUrl);
+          await attached
+            .frameLocator("iframe")
+            .frameLocator("iframe")
+            .frameLocator("iframe")
+            .getByRole("textbox", { name: "Response" })
+            .waitFor();
+          await attached.reload();
+          await attached
+            .frameLocator("iframe")
+            .frameLocator("iframe")
+            .frameLocator("iframe")
+            .getByRole("textbox", { name: "Response" })
+            .waitFor();
+          await closePlaywrightBrowserConnection({ cdpUrl });
+        }
+      } finally {
+        await closePlaywrightBrowserConnection({ cdpUrl });
+        await context?.close();
+        server.closeAllConnections();
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+    }, 30_000);
+
     it("returns selector no-match snapshots without waiting for the snapshot timeout", async () => {
       const rootDir = tempDirs.make("openclaw-snapshot-selector-absence-");
       const port = await getFreePort();

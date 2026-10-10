@@ -1,0 +1,57 @@
+diff --git a/lib/coreBundle.js b/lib/coreBundle.js
+--- a/lib/coreBundle.js
++++ b/lib/coreBundle.js
+@@ -37592,16 +37592,26 @@
+         this._bufferedAttachedToTargetEvents = [];
+         const promises2 = [
+           this._client.send("Page.enable"),
+-          this._client.send("Page.getFrameTree").then(({ frameTree }) => {
++          this._client.send("Page.getFrameTree").then(async ({ frameTree }) => {
++            // A CDP attachment to an existing OOPIF includes already-loaded local
++            // descendants. Register them before Runtime.enable replays contexts.
++            this._handleFrameTree(frameTree);
+             if (this._isMainFrame()) {
+-              this._handleFrameTree(frameTree);
+               this._addRendererListeners();
+             }
+             const attachedToTargetEvents = this._bufferedAttachedToTargetEvents || [];
+             this._bufferedAttachedToTargetEvents = void 0;
+             for (const event of attachedToTargetEvents)
+               this._onAttachedToTarget(event);
+-            const localFrames = this._isMainFrame() ? this._page.frames() : [this._page.frameManager.frame(this._targetId)];
++            // Seed utility worlds for every frame owned by this renderer session.
++            const localFrameIds = [];
++            const collectLocalFrames = (tree) => {
++              localFrameIds.push(tree.frame.id);
++              for (const child of tree.childFrames || [])
++                collectLocalFrames(child);
++            };
++            collectLocalFrames(frameTree);
++            const localFrames = localFrameIds.map((id) => this._page.frameManager.frame(id)).filter(Boolean);
+             for (const frame of localFrames) {
+               this._client._sendMayFail("Page.createIsolatedWorld", {
+                 frameId: frame._id,
+@@ -37619,10 +37629,11 @@
+               this._firstNonInitialNavigationCommittedFulfill();
+               this._eventListeners.push(eventsHelper.addEventListener(this._client, "Page.lifecycleEvent", (event) => this._onLifecycleEvent(event)));
+             }
++            // Keep lifecycle listeners installed before awaiting context replay.
++            await this._client.send("Runtime.enable", {});
+           }),
+           this._client.send("Log.enable", {}),
+           lifecycleEventsEnabled = this._client.send("Page.setLifecycleEventsEnabled", { enabled: true }),
+-          this._client.send("Runtime.enable", {}),
+           this._client.send("Page.addScriptToEvaluateOnNewDocument", {
+             source: "",
+             worldName: this._crPage.utilityWorldName
+@@ -37710,7 +37721,9 @@
+           this._page.frameManager.frameLifecycleEvent(event.frameId, "domcontentloaded");
+       }
+       _handleFrameTree(frameTree) {
+-        this._onFrameAttached(frameTree.frame.id, frameTree.frame.parentId || null);
++        // The OOPIF root is attached before its renderer session initializes.
++        if (!this._page.frameManager.frame(frameTree.frame.id))
++          this._onFrameAttached(frameTree.frame.id, frameTree.frame.parentId || null);
+         this._onFrameNavigated(frameTree.frame, true);
+         if (!frameTree.childFrames)
+           return;
