@@ -174,6 +174,13 @@ dropped, and iOS shows a notice asking you to repeat the last part. If one audio
 append receives no acknowledgment for 30 seconds, Talk ends. Explicit Gateway
 errors or a lost connection still end the call immediately.
 
+Browser Gateway-relay Talk tolerates slow audio acknowledgments while keeping
+at most three seconds of microphone audio in flight. Excess frames are dropped
+with a notice asking you to repeat the last part. A successful acknowledgment
+renews the relay's liveness window; if pending audio receives no acknowledgment
+for 30 seconds, Talk ends with a connection error and guidance to restart it.
+Explicit Gateway errors or a lost connection still end the call immediately.
+
 If the microphone disconnects or its permission is revoked, browser Talk ends
 the call and shows an error. Choose an available **Microphone input**, restore
 permission if needed, and start Talk again. An unexpected GPT-Live connection
