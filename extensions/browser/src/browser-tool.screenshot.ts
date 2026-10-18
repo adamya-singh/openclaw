@@ -66,6 +66,15 @@ export async function executeScreenshotAction({
   onTabActivity: (targetId: string | undefined) => void;
   opts?: BrowserScreenshotOptions;
 }): Promise<AgentToolResult<unknown>> {
+  // `path` belongs to download actions in the shared schema. Writing a raw
+  // capture to a caller-chosen path would bypass the private original and
+  // sanitized share copy, so reject it instead of letting the model attach a
+  // file that never exists.
+  if (readStringParam(params, "path")) {
+    throw new Error(
+      "path is not supported for action=screenshot; screenshots are saved automatically. Retry without path, then use the path named in the screenshot result.",
+    );
+  }
   const targetId = readStringParam(params, "targetId");
   const fullPage = Boolean(params.fullPage);
   const ref = readStringParam(params, "ref");
