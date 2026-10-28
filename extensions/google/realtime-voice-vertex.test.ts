@@ -189,6 +189,66 @@ describe("Google Vertex realtime voice", () => {
     });
   });
 
+  it("speaks only host-requested messages when the host owns replies", async () => {
+    const onAudio = vi.fn();
+    const onTranscript = vi.fn();
+    const bridge = buildGoogleVertexRealtimeVoiceProvider().createBridge({
+      providerConfig: { project: "cfg-project", location: "us-central1" },
+      instructions: "Persona instructions.",
+      autoRespondToAudio: false,
+      tools: [
+        {
+          type: "function",
+          name: "openclaw_agent_consult",
+          description: "Ask the agent.",
+          parameters: { type: "object", properties: {}, required: [] },
+        },
+      ],
+      onAudio,
+      onClearAudio: vi.fn(),
+      onTranscript,
+    });
+    await bridge.connect();
+
+    const connectParams = connectMock.mock.calls[0]?.[0] as {
+      config?: { tools?: unknown; systemInstruction?: unknown };
+      callbacks: { onopen: () => void; onmessage: (message: unknown) => void };
+    };
+    expect(connectParams.config?.tools).toBeUndefined();
+    expect(connectParams.config?.systemInstruction).toMatch(/stay completely silent/);
+    connectParams.callbacks.onopen();
+    connectParams.callbacks.onmessage({ setupComplete: {} });
+
+    const speech = (text: string) => ({
+      serverContent: {
+        modelTurn: {
+          parts: [
+            {
+              inlineData: {
+                mimeType: "audio/pcm;rate=24000",
+                data: Buffer.alloc(960, 0x40).toString("base64"),
+              },
+            },
+          ],
+        },
+        outputTranscription: { text, finished: true },
+      },
+    });
+    connectParams.callbacks.onmessage(speech("My own answer."));
+    connectParams.callbacks.onmessage({ serverContent: { turnComplete: true } });
+    expect(onAudio).not.toHaveBeenCalled();
+
+    bridge.sendUserMessage("Speak this exact OpenClaw answer.");
+    connectParams.callbacks.onmessage(speech("The agent answer."));
+    connectParams.callbacks.onmessage({ serverContent: { turnComplete: true } });
+    expect(onAudio).toHaveBeenCalledTimes(1);
+    expect(onTranscript).toHaveBeenCalledWith("assistant", "The agent answer.", true);
+    expect(onTranscript).not.toHaveBeenCalledWith("assistant", "My own answer.", true);
+
+    connectParams.callbacks.onmessage(speech("Another own answer."));
+    expect(onAudio).toHaveBeenCalledTimes(1);
+  });
+
   it("fails bridge creation with the missing project and location named", () => {
     expect(() => createVertexBridge({})).toThrow(/project and location/);
     expect(createGoogleGenAIMock).not.toHaveBeenCalled();

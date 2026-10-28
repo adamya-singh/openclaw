@@ -7,6 +7,7 @@ import {
 import { buildRealtimeVoiceAgentCancelProviderResult } from "../../../talk/agent-run-control-shared.js";
 import type { RealtimeVoiceAgentControlResult } from "../../../talk/agent-run-control.js";
 import { readSpeakableRealtimeVoiceToolResult } from "../../../talk/consult-question.js";
+import { buildRealtimeVoiceSpeakExactMessage } from "../../../talk/exact-speech-protocol.js";
 import type { RealtimeVoiceForcedConsultHandle } from "../../../talk/forced-consult-coordinator.js";
 import type { RealtimeVoiceToolResultOptions } from "../../../talk/provider-types.js";
 import {
@@ -32,18 +33,9 @@ const FORCED_CONSULT_FALLBACK_DELAY_MS = 200;
 const FORCED_CONSULT_RESULT_MAX_CHARS = 1_800;
 
 const FORCED_CONSULT_CHECKING_PROMPT = [
-  "Briefly tell the person that you are checking with OpenClaw.",
+  "In two or three words, tell the person you are on it.",
   "Do not answer the request yet. Wait for the OpenClaw result before giving the actual answer.",
 ].join(" ");
-
-function buildForcedConsultSpeechPrompt(text: string): string {
-  return [
-    "OpenClaw finished checking. Speak this result naturally and concisely.",
-    "Do not mention tool calls, JSON, or internal routing.",
-    "",
-    text,
-  ].join("\n");
-}
 
 export function buildAlreadyDeliveredToolResult(): Record<string, string> {
   return {
@@ -184,7 +176,7 @@ export function scheduleForcedAgentConsult(session: RelaySession, question: stri
       args: {
         question: handle.question,
         context:
-          "The realtime provider produced a final user transcript without invoking openclaw_agent_consult, so OpenClaw is forcing the consult for realtime Talk.",
+          "The person said this aloud in a live voice conversation. Your reply will be read to them word for word.",
         responseStyle: "Reply in a concise spoken tone.",
       },
       talkEvent: session.harness.talk.emit({
@@ -397,7 +389,10 @@ export function submitForcedTalkRealtimeRelayToolResult(
     }
     const hasNativeCalls = session.harness.forcedConsults.nativeCallIds(forcedConsult).length > 0;
     if (!suppressResponse && text && (!hasNativeCalls || providerOptions)) {
-      session.bridge.sendUserMessage(buildForcedConsultSpeechPrompt(text));
+      // Forced routing makes the agent the speaker; the voice model only reads its answer.
+      session.bridge.sendUserMessage(
+        buildRealtimeVoiceSpeakExactMessage({ text, surfaceLabel: "the person" }),
+      );
     }
     broadcastToolResultToOwner(session, {
       callId,

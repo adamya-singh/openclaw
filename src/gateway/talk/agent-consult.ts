@@ -134,6 +134,7 @@ export async function startTalkRealtimeAgentConsult(
     // Speech owns reusable history; keep consult scaffolding only in the lossless archive.
     const chatSendResult = handleTrustedInternalChatSend(chatSendOptions, undefined, {
       toolsAllow: authority.toolsAllow,
+      extraSystemPrompt: normalizedTalk?.consultInstructions,
       transcript: { display: false, excludeFromContext: true },
       prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
       beforeDispatch: async ({ runId, assertCurrent, assertWorkAdmissionCurrent }) => {

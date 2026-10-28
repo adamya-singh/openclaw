@@ -10,6 +10,8 @@ export type ChatSendInternalOptions = {
   transcript?: Parameters<typeof createGatewayChatUserTurnController>[0]["transcript"];
   prepareAssistantTranscriptMessage?: PrepareAssistantTranscriptMessage;
   toolsAllow?: string[];
+  /** Trusted operator prompt text added to this turn's system prompt (Talk voice guidance). */
+  extraSystemPrompt?: string;
   beforeDispatch?: (params: {
     runId: string;
     assertCurrent: () => void;

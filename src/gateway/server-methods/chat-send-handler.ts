@@ -268,6 +268,11 @@ async function handleChatSendWithOptions(
       userTurn,
     });
     const { ctx, isInternalTextSlashCommandTurn } = preparedUserTurn;
+    if (options?.extraSystemPrompt) {
+      ctx.GroupSystemPrompt = [ctx.GroupSystemPrompt, options.extraSystemPrompt]
+        .filter(Boolean)
+        .join("\n\n");
+    }
     admission.setPendingInputCleanup(async () => {
       try {
         const pending =
@@ -707,7 +712,11 @@ export async function handleTrustedInternalChatSend(
   onAdmissionOwned?: () => Promise<boolean>,
   inputOptions?: Pick<
     ChatSendInternalOptions,
-    "transcript" | "toolsAllow" | "prepareAssistantTranscriptMessage" | "beforeDispatch"
+    | "transcript"
+    | "toolsAllow"
+    | "prepareAssistantTranscriptMessage"
+    | "beforeDispatch"
+    | "extraSystemPrompt"
   >,
 ): Promise<void> {
   await handleChatSendWithOptions(options, onAdmissionOwned, undefined, {

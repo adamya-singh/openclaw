@@ -656,6 +656,7 @@ export const FIELD_LABELS: Record<string, string> = {
   "talk.silenceTimeoutMs": "Talk Silence Timeout (ms)",
   "talk.consultThinkingLevel": "Talk Consult Thinking Level",
   "talk.consultFastMode": "Talk Consult Fast Mode",
+  "talk.consultInstructions": "Talk Consult Instructions",
   messages: "Messages",
   "messages.visibleReplies": "Visible Replies",
   "messages.responsePrefix": "Outbound Response Prefix",

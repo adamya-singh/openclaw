@@ -2824,7 +2824,15 @@ describe("talk.client.toolCall handler", () => {
           connId: "conn-1",
           connect: { scopes: [configured ? "operator.write" : "operator.talk"] },
         },
-        config: configured ? { talk: { consultThinkingLevel: "low", consultFastMode: true } } : {},
+        config: configured
+          ? {
+              talk: {
+                consultThinkingLevel: "low",
+                consultFastMode: true,
+                consultInstructions: "Voice guidance.",
+              },
+            }
+          : {},
       });
       const chatInput = mockCallArg(mocks.chatSend) as {
         req?: Record<string, unknown>;
@@ -2842,6 +2850,7 @@ describe("talk.client.toolCall handler", () => {
         toolsAllow: configured
           ? undefined
           : ["read", "web_search", "web_fetch", "x_search", "memory_search", "memory_get"],
+        extraSystemPrompt: configured ? "Voice guidance." : undefined,
         transcript: { display: false, excludeFromContext: true },
         prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
         beforeDispatch: expect.any(Function),

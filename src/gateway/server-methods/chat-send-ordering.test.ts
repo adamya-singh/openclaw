@@ -225,3 +225,33 @@ it.for([false, true])(
     }
   },
 );
+
+it("adds trusted internal system prompt text to the dispatched turn", async ({ signal }) => {
+  const fixture = await createFixture({ active: false });
+  const respond = vi.fn<RespondFn>();
+  try {
+    await withPluginRuntimeGatewayRequestScope(
+      { context: fixture.context, isWebchatConnect: () => true },
+      () =>
+        handleTrustedInternalChatSend(
+          {
+            req: { type: "req", id: fixture.params.idempotencyKey, method: "chat.send" },
+            params: fixture.params,
+            client: fixture.client,
+            context: fixture.context,
+            respond,
+            isWebchatConnect: () => true,
+          },
+          undefined,
+          { extraSystemPrompt: "Voice mode guidance." },
+        ),
+    );
+    await withinTest(fixture.dispatchedRecorder, signal);
+    const dispatch = dispatchInboundMessageMock.mock.calls[0]?.[0] as {
+      ctx?: { GroupSystemPrompt?: string };
+    };
+    expect(dispatch.ctx?.GroupSystemPrompt).toBe("Voice mode guidance.");
+  } finally {
+    await fixture.cleanup();
+  }
+});

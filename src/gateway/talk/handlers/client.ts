@@ -22,6 +22,7 @@ import {
 import { controlRealtimeVoiceAgentRun } from "../../../talk/agent-run-control.js";
 import {
   authorizeClientVoiceConfirmation,
+  authorizeObservedClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
   type ClientVoiceConfirmationGrant,
 } from "../../../talk/client-voice-confirmation.js";
@@ -54,6 +55,7 @@ import {
 import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
+  isTalkRealtimeRelayForcedConsult,
 } from "../relay/operations.js";
 import { talkRequestError } from "../request-error.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
@@ -231,6 +233,17 @@ export const talkClientHandlers: GatewayRequestHandlers = {
               agentId,
               voiceSessionId,
               confirmationId: parsedArgs.confirmationId,
+            });
+          } else if (
+            relaySessionId &&
+            connId &&
+            isTalkRealtimeRelayForcedConsult({ relaySessionId, connId, callId: params.callId })
+          ) {
+            // Forced consults carry the user's words, not model tool arguments, so like
+            // native delegation only the persisted spoken "yes" can confirm the paused action.
+            confirmationGrant = authorizeObservedClientVoiceConfirmation({
+              agentId,
+              voiceSessionId,
             });
           }
           // Only validated calls may replace the legacy client's connection binding.

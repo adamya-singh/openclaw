@@ -128,7 +128,17 @@ const TURN_COVERAGE = {
 type GoogleRealtimeLiveConfig = GoogleRealtimeVoiceProviderConfig & {
   instructions?: string;
   tools?: RealtimeVoiceTool[];
+  autoRespondToAudio?: boolean;
 };
+
+// Live has no protocol switch for "transcribe but do not answer", so hosts that own
+// replies (forced agent consults) get a speech-only voice: no tools, these rules, and
+// an output gate in the bridge. Verified on Vertex gemini-3.8-live 2026-10-28.
+const GOOGLE_SPEECH_ONLY_INSTRUCTIONS = [
+  "You are the speaking voice of OpenClaw. A separate OpenClaw agent hears everything the person says and writes every reply.",
+  "Never answer, acknowledge, or comment on the person's speech yourself: after they speak, stay completely silent and produce no audio.",
+  "Speak only when OpenClaw sends you a text message asking you to speak, and then say exactly what it asks for, without adding, removing, or rephrasing words.",
+].join(" ");
 
 type GoogleRealtimeAuth =
   | { kind: "api-key"; apiKey: string }
@@ -233,7 +243,10 @@ function buildGoogleLiveConnectConfig(
   model: string,
   asyncFunctionCalling: boolean,
 ): LiveConnectConfig {
-  const functionDeclarations = buildFunctionDeclarations(config.tools, asyncFunctionCalling);
+  const speechOnly = config.autoRespondToAudio === false;
+  const functionDeclarations = speechOnly
+    ? []
+    : buildFunctionDeclarations(config.tools, asyncFunctionCalling);
   const realtimeInputConfig = buildRealtimeInputConfig(config);
   const thinkingConfig = buildThinkingConfig(config, model);
   return {
@@ -248,7 +261,7 @@ function buildGoogleLiveConnectConfig(
         },
       },
     },
-    systemInstruction: config.instructions,
+    systemInstruction: speechOnly ? GOOGLE_SPEECH_ONLY_INSTRUCTIONS : config.instructions,
     ...(functionDeclarations.length > 0 ? { tools: [{ functionDeclarations }] } : {}),
     ...(realtimeInputConfig ? { realtimeInputConfig } : {}),
     inputAudioTranscription: {},
@@ -316,6 +329,11 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
   readonly supportsToolResultContinuation: boolean;
   private readonly schedulesConsultResultWhenIdle: boolean;
   readonly supportsToolResultSuppression = false;
+  // Speech-only sessions drop the model's own replies to user audio; output opens for
+  // a host-requested message and closes when that spoken turn completes or is interrupted.
+  private readonly speechOnly: boolean;
+  private requestedSpeechPending = false;
+  private requestedSpeechStarted = false;
 
   private session: Session | null = null;
   private connected = false;
@@ -361,6 +379,7 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
     // on the wire 2026-10-28 with gemini-live-2.5-flash-native-audio in us-central1.
     this.supportsToolResultContinuation =
       config.auth.kind !== "vertex" && this.schedulesConsultResultWhenIdle;
+    this.speechOnly = config.autoRespondToAudio === false;
   }
 
   async connect(): Promise<void> {
@@ -567,6 +586,10 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
     const normalized = text.trim();
     if (!normalized || !this.session || !this.connected || !this.sessionConfigured) {
       return;
+    }
+    if (this.speechOnly) {
+      this.requestedSpeechPending = true;
+      this.requestedSpeechStarted = false;
     }
     if (isGemini31LiveModel(this.model)) {
       this.session.sendRealtimeInput({ text: normalized });
@@ -819,14 +842,15 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
       }
     }
 
-    if (content.outputTranscription) {
+    const outputAllowed = !this.speechOnly || this.requestedSpeechPending;
+    if (content.outputTranscription && outputAllowed) {
       // Keep requested outputAudioTranscription canonical; modelTurn text has no turn identity.
       if (!this.appendTranscript("assistant", content.outputTranscription)) {
         return;
       }
     }
 
-    for (const part of content.modelTurn?.parts ?? []) {
+    for (const part of outputAllowed ? (content.modelTurn?.parts ?? []) : []) {
       if (part.inlineData?.data) {
         const canonicalAudio = canonicalizeGoogleProviderBase64(part.inlineData.data);
         if (!canonicalAudio) {
@@ -837,6 +861,7 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
         const sampleRate = parsePcmSampleRate(part.inlineData.mimeType);
         const audio = this.toOutputAudio(pcm, sampleRate);
         if (audio.length > 0) {
+          this.requestedSpeechStarted = this.speechOnly;
           this.config.onAudio(audio);
           if (this.connectionOwner !== owner) {
             return;
@@ -850,6 +875,12 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
     }
     if (content.generationComplete || content.interrupted || content.turnComplete) {
       this.flushPendingTranscript("assistant");
+    }
+    // A silent auto-turn can complete after the request was sent; only the turn
+    // that actually spoke closes the gate.
+    if ((content.interrupted || content.turnComplete) && this.requestedSpeechStarted) {
+      this.requestedSpeechPending = false;
+      this.requestedSpeechStarted = false;
     }
     const done = isResponseDone(this.model, content.interactionStatus, this.responseInterrupted);
     if (content.turnComplete && this.connectionOwner === owner && done) {

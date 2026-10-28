@@ -2375,7 +2375,7 @@ describe("talk realtime gateway relay", () => {
       options: { willContinue: true },
     });
     expect(bridge.sendUserMessage).toHaveBeenLastCalledWith(
-      "Briefly tell the person that you are checking with OpenClaw. Do not answer the request yet. Wait for the OpenClaw result before giving the actual answer.",
+      "In two or three words, tell the person you are on it. Do not answer the request yet. Wait for the OpenClaw result before giving the actual answer.",
     );
 
     bridgeRequest?.onToolCall?.({
@@ -2418,10 +2418,10 @@ describe("talk realtime gateway relay", () => {
     );
     expect(bridge.sendUserMessage).toHaveBeenLastCalledWith(
       [
-        "OpenClaw finished checking. Speak this result naturally and concisely.",
-        "Do not mention tool calls, JSON, or internal routing.",
-        "",
-        "Here is the checked answer.",
+        "Internal OpenClaw voice playback result.",
+        "Do not call openclaw_agent_consult or any other tool for this message.",
+        "Speak this exact OpenClaw answer to the person, without adding, removing, or rephrasing words.",
+        'Answer: "Here is the checked answer."',
       ].join("\n"),
     );
     expect(

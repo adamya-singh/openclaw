@@ -271,6 +271,8 @@ export const CORE_FIELD_HELP: Record<string, string> = {
     "Use this to override the thinking level for the regular agent run behind Talk realtime consults.",
   "talk.consultFastMode":
     "Use this to set true or false fast mode for the regular agent run behind Talk realtime consults.",
+  "talk.consultInstructions":
+    "Extra system prompt text for the regular agent run behind Talk realtime consults, appended after the built-in voice guidance. Use it to tell the agent how to behave when you talk to it by voice.",
   "talk.speechLocale":
     'BCP 47 locale id for Talk speech recognition on device nodes and the iOS system-voice fallback, for example "ru-RU". Leave unset to use each device default.',
   "talk.interruptOnSpeech":

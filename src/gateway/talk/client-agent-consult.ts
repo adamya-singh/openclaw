@@ -241,6 +241,7 @@ export function createTalkClientAgentConsultRunner(params: {
           questionSourceLabel: "user",
           thinkLevel: talkConfig?.consultThinkingLevel,
           fastMode: talkConfig?.consultFastMode,
+          voiceInstructions: talkConfig?.consultInstructions,
           ...authority,
           abortSignal: signal,
           onRunStarted: async ({ runId, sessionId, timeoutMs }) => {

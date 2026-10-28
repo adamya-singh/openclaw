@@ -149,6 +149,7 @@ export function normalizeTalkSection(value: TalkConfig | undefined): TalkConfig 
       typeof value.interruptOnSpeech === "boolean" ? value.interruptOnSpeech : undefined,
     consultThinkingLevel: normalizeThinkLevel(normalizeOptionalString(value.consultThinkingLevel)),
     consultFastMode: parseBoolean(normalizeFastMode(value.consultFastMode)),
+    consultInstructions: normalizeOptionalString(value.consultInstructions),
     silenceTimeoutMs: normalizeInteger(value.silenceTimeoutMs, 1),
     providers: normalizeTalkProviders(value.providers),
     realtime: normalizeTalkRealtimeConfig(value.realtime),

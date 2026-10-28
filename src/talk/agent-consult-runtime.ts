@@ -385,6 +385,8 @@ export async function consultRealtimeVoiceAgent(params: {
   toolsAllow?: string[];
   toolBindings?: RunEmbeddedAgentParams["toolBindings"];
   extraSystemPrompt?: string;
+  /** Operator voice guidance appended to the consult system prompt (`talk.consultInstructions`). */
+  voiceInstructions?: string;
   fallbackText?: string;
   abortSignal?: AbortSignal;
   onRunStarted?: (params: {
@@ -556,9 +558,13 @@ export async function consultRealtimeVoiceAgent(params: {
         timeoutMs,
         runId,
         lane: params.lane,
-        extraSystemPrompt:
+        extraSystemPrompt: [
           params.extraSystemPrompt ??
-          "You are the configured OpenClaw agent receiving delegated requests from a live voice bridge. Act on behalf of the user, use available tools when appropriate, and return a brief speakable result.",
+            "You are the configured OpenClaw agent receiving delegated requests from a live voice bridge. Act on behalf of the user, use available tools when appropriate, and return a brief speakable result.",
+          params.voiceInstructions,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
         agentDir,
         abortSignal,
       });
