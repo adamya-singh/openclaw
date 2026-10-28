@@ -44,11 +44,7 @@ import {
   resamplePcm,
 } from "openclaw/plugin-sdk/realtime-voice-provider";
 import { warn } from "openclaw/plugin-sdk/runtime-env";
-import {
-  asSafeIntegerInRange,
-  isRecord,
-  normalizeOptionalString,
-} from "openclaw/plugin-sdk/string-coerce-runtime";
+import { asSafeIntegerInRange, isRecord } from "openclaw/plugin-sdk/string-coerce-runtime";
 import { canonicalizeGoogleProviderBase64 } from "./base64.js";
 import { resolveGoogleEnvApiKey } from "./gemini-auth.js";
 import { createGoogleGenAI, type GoogleGenAIClient } from "./google-genai-runtime.js";
@@ -77,6 +73,7 @@ import {
   supportsAsyncFunctionCalling,
   supportsClientContentInterrupt,
 } from "./realtime-voice-model-contract.js";
+import {
   isGoogleVertexRealtimeConfigured,
   resolveGoogleVertexRealtimeConfigRecord,
   resolveGoogleVertexRealtimeTarget,
@@ -1248,7 +1245,9 @@ export function buildGoogleRealtimeVoiceProvider(): RealtimeVoiceProviderPlugin 
     },
     resolveConfig: ({ cfg, rawConfig }) => normalizeGoogleRealtimeProviderConfig(rawConfig, cfg),
     isConfigured: ({ providerConfig }) =>
-      Boolean(normalizeGoogleRealtimeProviderConfig(providerConfig).apiKey || resolveGoogleEnvApiKey()),
+      Boolean(
+        normalizeGoogleRealtimeProviderConfig(providerConfig).apiKey || resolveGoogleEnvApiKey(),
+      ),
     createBridge: (req) => {
       const config = normalizeGoogleRealtimeProviderConfig(req.providerConfig);
       const apiKey = config.apiKey || resolveGoogleEnvApiKey();
