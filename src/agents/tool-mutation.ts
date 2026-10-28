@@ -88,7 +88,7 @@ const READ_ONLY_TOOL_ACTIONS = new Map<string, ReadonlySet<string>>([
   ["gateway", new Set(["config.get", "config.schema.lookup"])],
   ["portal", new Set(["list"])],
   ["theme", new Set(["list", "get"])],
-  ["nodes", new Set(["status", "describe", "pending"])],
+  ["nodes", new Set(["status", "describe", "pending", "list"])],
 ]);
 const PRESENCE_REPLAY_SAFE_ACTIONS = new Set(["list", "person", "device"]);
 

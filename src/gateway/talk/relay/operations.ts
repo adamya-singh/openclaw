@@ -465,19 +465,6 @@ export async function flushTalkRealtimeRelayVoiceWrites(params: {
   await getRelaySession(params.relaySessionId, params.connId).voiceTranscriptQueue.flush();
 }
 
-/** True when this relay call id is a Gateway-forced transcript consult, not a model tool call. */
-export function isTalkRealtimeRelayForcedConsult(params: {
-  relaySessionId: string;
-  connId: string;
-  callId: string;
-}): boolean {
-  const session = relaySessions.get(params.relaySessionId);
-  return (
-    session?.connId === params.connId &&
-    session.harness.forcedConsults.handles().some((handle) => handle.id === params.callId)
-  );
-}
-
 export async function steerTalkRealtimeRelayAgentRun(params: {
   relaySessionId: string;
   connId: string;

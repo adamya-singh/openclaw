@@ -21,6 +21,7 @@ import {
 } from "../../../talk/agent-consult-tool.js";
 import { controlRealtimeVoiceAgentRun } from "../../../talk/agent-run-control.js";
 import {
+  authorizeAffirmedClientVoiceRun,
   authorizeClientVoiceConfirmation,
   authorizeObservedClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
@@ -55,7 +56,6 @@ import {
 import {
   ensureTalkRealtimeRelayVoiceSession,
   flushTalkRealtimeRelayVoiceWrites,
-  isTalkRealtimeRelayForcedConsult,
 } from "../relay/operations.js";
 import { talkRequestError } from "../request-error.js";
 import { resolveOwnedActiveTalkRunTarget } from "../run-ownership.js";
@@ -234,17 +234,13 @@ export const talkClientHandlers: GatewayRequestHandlers = {
               voiceSessionId,
               confirmationId: parsedArgs.confirmationId,
             });
-          } else if (
-            relaySessionId &&
-            connId &&
-            isTalkRealtimeRelayForcedConsult({ relaySessionId, connId, callId: params.callId })
-          ) {
-            // Forced consults carry the user's words, not model tool arguments, so like
-            // native delegation only the persisted spoken "yes" can confirm the paused action.
-            confirmationGrant = authorizeObservedClientVoiceConfirmation({
-              agentId,
-              voiceSessionId,
-            });
+          } else {
+            // Without a model-supplied id, only persisted speech can approve: a yes after
+            // the paused action, or a yes to the agent's own question with nothing paused.
+            // Either approves the whole run it starts, like an approved plan in chat.
+            confirmationGrant =
+              authorizeObservedClientVoiceConfirmation({ agentId, voiceSessionId }) ??
+              authorizeAffirmedClientVoiceRun({ agentId, voiceSessionId });
           }
           // Only validated calls may replace the legacy client's connection binding.
           if (connId && !relaySessionId) {

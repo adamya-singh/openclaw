@@ -7,6 +7,11 @@ import {
 } from "./client-voice-confirmation-policy.js";
 
 const CONFIRMATION_TTL_MS = 2 * 60_000;
+// One spoken yes approves the whole follow-up run, like an approved plan in chat.
+const RUN_APPROVAL_KEY = "*";
+const RUN_APPROVAL_TTL_MS = 15 * 60_000;
+// A yes to the agent's own question must be the latest utterance and recent.
+const AFFIRMED_RUN_FRESH_MS = 60_000;
 const utteranceContextBrand = Symbol("voice-confirmation-utterance");
 
 export type ClientVoiceConfirmationUtteranceContext = {
@@ -37,6 +42,8 @@ export type ClientVoiceConfirmationGrant = {
   fingerprint: string;
   expiresAt: number;
   retryContext?: string;
+  /** Set for a yes to the agent's own question, when no tool challenge was pending. */
+  affirmedUtteranceAt?: number;
 };
 
 type ConfirmationScopeState = {
@@ -180,6 +187,10 @@ function resolveApprovedFingerprint(
   }
   const state = confirmationScopes.get(scopeKey);
   const approved = state?.approvedByRun.get(runId);
+  const runApprovalExpiresAt = approved?.get(RUN_APPROVAL_KEY);
+  if (runApprovalExpiresAt !== undefined && runApprovalExpiresAt >= now) {
+    return true;
+  }
   const expiresAt = approved?.get(fingerprint);
   const expired = !expiresAt || expiresAt < now;
   if (expired || consume) {
@@ -283,6 +294,21 @@ export function noteClientVoiceConfirmationUtterance(params: {
   const scopeKey = confirmationScopeKey(params.agentId, params.voiceSessionId);
   const state = getPrunedConfirmationScope(scopeKey, params.timestamp);
   const observed = utteranceContexts.get(params.confirmation);
+  if (
+    !state?.pending &&
+    observed?.pending === undefined &&
+    observed?.persistedText !== undefined &&
+    observed.agentId === params.agentId &&
+    observed.voiceSessionId === params.voiceSessionId
+  ) {
+    // Without a challenge, keep the latest persisted speech so a yes to the agent's
+    // own question can approve the run it starts (authorizeAffirmedClientVoiceRun).
+    (state ?? getOrCreateConfirmationScope(scopeKey)).recentUtterance = {
+      text: observed.persistedText,
+      timestamp: observed.timestamp,
+    };
+    return;
+  }
   if (
     !state?.pending ||
     !observed ||
@@ -615,7 +641,7 @@ export function authorizeClientVoiceConfirmation(params: {
       ? {
           retryContext:
             `The user's persisted spoken confirmation is bound to this previously blocked tool call: ${JSON.stringify(confirmation.blockedCall)}. ` +
-            "Retry only that call with its unchanged arguments. Do not add confirmationId or other confirmation metadata to the action tool's arguments. This confirmation authorizes one exact action; other actions still require their own confirmation.",
+            "Retry that call with its unchanged arguments, then finish the request. Do not add confirmationId or other confirmation metadata to the action tool's arguments. This confirmation approves the actions this run needs for the request.",
         }
       : {}),
   };
@@ -634,6 +660,22 @@ export function bindAuthorizedClientVoiceConfirmation(params: {
   const now = params.now ?? Date.now();
   const scopeKey = confirmationScopeKey(params.grant.agentId, params.grant.voiceSessionId);
   const state = confirmationScopes.get(scopeKey);
+  if (params.grant.affirmedUtteranceAt !== undefined) {
+    const utterance = state?.recentUtterance;
+    if (
+      !state ||
+      state.pending ||
+      utterance?.timestamp !== params.grant.affirmedUtteranceAt ||
+      !isExplicitAffirmation(utterance.text)
+    ) {
+      return false;
+    }
+    approveRun(state, params.runId, now);
+    // Consume the yes so it cannot approve a second run.
+    delete state.recentUtterance;
+    cleanupConfirmationScope(scopeKey, state);
+    return true;
+  }
   const pending = state?.pending;
   if (
     !state ||
@@ -646,13 +688,48 @@ export function bindAuthorizedClientVoiceConfirmation(params: {
   ) {
     return false;
   }
-  const approved = state.approvedByRun.get(params.runId) ?? new Map<string, number>();
-  approved.set(pending.fingerprint, pending.expiresAt);
-  state.approvedByRun.set(params.runId, approved);
-  // Consume now that the run exists: one spoken affirmation authorizes one action.
+  approveRun(state, params.runId, now);
+  // Consume now that the run exists: one spoken affirmation approves that one run.
   clearPendingConfirmation(state);
   cleanupConfirmationScope(scopeKey, state);
   return true;
+}
+
+function approveRun(state: ConfirmationScopeState, runId: string, now: number): void {
+  const approved = state.approvedByRun.get(runId) ?? new Map<string, number>();
+  approved.set(RUN_APPROVAL_KEY, now + RUN_APPROVAL_TTL_MS);
+  state.approvedByRun.set(runId, approved);
+}
+
+/** A yes to the agent's own question, with no tool challenge pending, approves the next run. */
+export function authorizeAffirmedClientVoiceRun(params: {
+  agentId: string;
+  voiceSessionId: string;
+  now?: number;
+}): ClientVoiceConfirmationGrant | undefined {
+  const now = params.now ?? Date.now();
+  const state = getPrunedConfirmationScope(
+    confirmationScopeKey(params.agentId, params.voiceSessionId),
+    now,
+  );
+  const utterance = state?.recentUtterance;
+  if (
+    !state ||
+    state.pending ||
+    !utterance ||
+    now - utterance.timestamp > AFFIRMED_RUN_FRESH_MS ||
+    !isExplicitAffirmation(utterance.text)
+  ) {
+    return undefined;
+  }
+  return {
+    agentId: params.agentId,
+    voiceSessionId: params.voiceSessionId,
+    confirmationId: "",
+    fingerprint: RUN_APPROVAL_KEY,
+    expiresAt: now + RUN_APPROVAL_TTL_MS,
+    affirmedUtteranceAt: utterance.timestamp,
+  };
 }
 
 /**
@@ -671,6 +748,7 @@ export function deactivateClientVoiceConfirmationSession(
     return;
   }
   clearPendingConfirmation(state);
+  delete state.recentUtterance;
   const live = new Set(liveRunIds);
   for (const runId of state.approvedByRun.keys()) {
     if (!live.has(runId)) {

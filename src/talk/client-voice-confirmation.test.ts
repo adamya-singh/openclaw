@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  authorizeAffirmedClientVoiceRun,
   authorizeClientVoiceConfirmation as authorizeClientVoiceConfirmationForTest,
   authorizeObservedClientVoiceConfirmation,
   bindAuthorizedClientVoiceConfirmation,
@@ -463,7 +464,7 @@ describe("client voice confirmation", () => {
     ).toBe(true);
   });
 
-  it("binds approval to the exact tool fingerprint", () => {
+  it("approves every action in the confirmed run, like an approved chat plan", () => {
     const confirmationId = block({
       voiceSessionId: "voice-1",
       toolParams: { action: "send", message: "A" },
@@ -485,20 +486,60 @@ describe("client voice confirmation", () => {
       checkClientVoiceToolConfirmationPolicy({
         voiceSessionId: "voice-1",
         runId: "run-approved",
-        toolName: "message",
-        toolParams: { action: "send", message: "B" },
+        toolName: "exec",
+        toolParams: { command: "cmd.exe /c start msedge" },
         now: 103,
-      }).allowed,
-    ).toBe(false);
+      }),
+    ).toEqual({ allowed: true });
     expect(
       checkClientVoiceToolConfirmationPolicy({
         voiceSessionId: "voice-1",
-        runId: "run-approved",
+        runId: "run-other",
         toolName: "message",
-        toolParams: { action: "send", message: "A" },
+        toolParams: { action: "send", message: "B" },
         now: 104,
+      }).allowed,
+    ).toBe(false);
+  });
+
+  it("approves the next run when the user says yes to the agent's own question", () => {
+    noteClientVoiceConfirmationUtterance({
+      voiceSessionId: "voice-1",
+      text: "yes",
+      timestamp: 100,
+    });
+    const grant = authorizeAffirmedClientVoiceRun({
+      agentId: "main",
+      voiceSessionId: "voice-1",
+      now: 101,
+    });
+    expect(grant).toBeDefined();
+    expect(
+      bindAuthorizedClientVoiceConfirmation({ grant: grant!, runId: "run-plan", now: 101 }),
+    ).toBe(true);
+    expect(
+      consumeClientVoiceToolConfirmationPolicy({
+        voiceSessionId: "voice-1",
+        runId: "run-plan",
+        toolName: "exec",
+        toolParams: { command: "open" },
+        now: 102,
       }),
     ).toEqual({ allowed: true });
+    // The yes is consumed: it cannot approve a second run.
+    expect(
+      authorizeAffirmedClientVoiceRun({ agentId: "main", voiceSessionId: "voice-1", now: 103 }),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    ["a new request", "what's the weather", 101],
+    ["a stale yes", "yes", 60_101],
+  ])("does not approve a run from %s", (_label, text, now) => {
+    noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-1", text, timestamp: 100 });
+    expect(
+      authorizeAffirmedClientVoiceRun({ agentId: "main", voiceSessionId: "voice-1", now }),
+    ).toBeUndefined();
   });
 
   it("prunes an abandoned confirmation when its TTL expires", () => {
@@ -577,7 +618,7 @@ describe("client voice confirmation", () => {
     },
   );
 
-  it("consumes an approved fingerprint once", () => {
+  it("keeps a run approval across repeated actions until it expires", () => {
     const toolParams = { action: "send", message: "A" };
     const confirmationId = block({ voiceSessionId: "voice-1", toolParams, now: 100 });
     noteClientVoiceConfirmationUtterance({
@@ -592,40 +633,24 @@ describe("client voice confirmation", () => {
     });
     bindAuthorizedClientVoiceConfirmation({ grant, runId: "run-approved", now: 102 });
 
-    expect(
-      checkClientVoiceToolConfirmationPolicy({
-        voiceSessionId: "voice-1",
-        runId: "run-approved",
-        toolName: "message",
-        toolParams,
-        now: 103,
-      }),
-    ).toEqual({ allowed: true });
-    expect(
-      checkClientVoiceToolConfirmationPolicy({
-        voiceSessionId: "voice-1",
-        runId: "run-approved",
-        toolName: "message",
-        toolParams,
-        now: 104,
-      }),
-    ).toEqual({ allowed: true });
+    for (const now of [103, 104]) {
+      expect(
+        consumeClientVoiceToolConfirmationPolicy({
+          voiceSessionId: "voice-1",
+          runId: "run-approved",
+          toolName: "message",
+          toolParams,
+          now,
+        }),
+      ).toEqual({ allowed: true });
+    }
     expect(
       consumeClientVoiceToolConfirmationPolicy({
         voiceSessionId: "voice-1",
         runId: "run-approved",
         toolName: "message",
         toolParams,
-        now: 105,
-      }),
-    ).toEqual({ allowed: true });
-    expect(
-      consumeClientVoiceToolConfirmationPolicy({
-        voiceSessionId: "voice-1",
-        runId: "run-approved",
-        toolName: "message",
-        toolParams,
-        now: 106,
+        now: 102 + 15 * 60_000 + 1,
       }).allowed,
     ).toBe(false);
   });
