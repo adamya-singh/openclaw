@@ -162,12 +162,6 @@ function createGoogleRealtimeClient(
   });
 }
 
-// Vertex Live rejects the async function-calling fields: a tool response carrying
-// willContinue closes the socket with 1007 "Unknown name", so Vertex stays sequential.
-function resolveAsyncFunctionCalling(model: string, authKind: GoogleRealtimeAuth["kind"]): boolean {
-  return authKind !== "vertex" && supportsAsyncFunctionCalling(model);
-}
-
 function buildRealtimeInputConfig(
   config: GoogleRealtimeLiveConfig,
 ): RealtimeInputConfig | undefined {
@@ -320,6 +314,7 @@ type GooglePendingToolResponse = {
 
 class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
   readonly supportsToolResultContinuation: boolean;
+  private readonly schedulesConsultResultWhenIdle: boolean;
   readonly supportsToolResultSuppression = false;
 
   private session: Session | null = null;
@@ -360,8 +355,12 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
   constructor(private readonly config: GoogleRealtimeVoiceBridgeConfig) {
     this.audioFormat = config.audioFormat ?? REALTIME_VOICE_AUDIO_FORMAT_G711_ULAW_8KHZ;
     this.model = config.model ?? GOOGLE_REALTIME_DEFAULT_MODEL;
+    this.schedulesConsultResultWhenIdle = modelSupportsToolResultContinuation(this.model);
+    // Vertex Live accepts NON_BLOCKING declarations and WHEN_IDLE scheduling but closes
+    // the socket (1007 'Unknown name "willContinue"') on interim responses; re-verified
+    // on the wire 2026-10-28 with gemini-live-2.5-flash-native-audio in us-central1.
     this.supportsToolResultContinuation =
-      config.auth.kind !== "vertex" && modelSupportsToolResultContinuation(this.model);
+      config.auth.kind !== "vertex" && this.schedulesConsultResultWhenIdle;
   }
 
   async connect(): Promise<void> {
@@ -414,7 +413,7 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
           ...buildGoogleLiveConnectConfig(
             this.config,
             this.model,
-            resolveAsyncFunctionCalling(this.model, this.config.auth.kind),
+            supportsAsyncFunctionCalling(this.model),
           ),
           ...(this.config.sessionResumption === false
             ? {}
@@ -618,7 +617,7 @@ class GoogleRealtimeVoiceBridge implements RealtimeVoiceBridge {
       name,
       response: wrapsResult ? { output: result } : (result as Record<string, unknown>),
     };
-    if (isConsultTool && this.supportsToolResultContinuation) {
+    if (isConsultTool && this.schedulesConsultResultWhenIdle) {
       functionResponse.scheduling = FunctionResponseScheduling.WHEN_IDLE;
       if (options?.willContinue === true) {
         functionResponse.willContinue = true;

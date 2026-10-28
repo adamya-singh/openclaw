@@ -140,7 +140,8 @@ describe("Google Vertex realtime voice", () => {
     expect(connectMock.mock.calls[0]?.[0].model).toBe("custom-live-model");
   });
 
-  it("keeps tool calling sequential because Vertex Live rejects willContinue", async () => {
+  it("runs the consult non-blocking without interim responses Vertex Live rejects", async () => {
+    const onError = vi.fn();
     const bridge = buildGoogleVertexRealtimeVoiceProvider().createBridge({
       providerConfig: { project: "cfg-project", location: "us-central1" },
       tools: [
@@ -153,16 +154,39 @@ describe("Google Vertex realtime voice", () => {
       ],
       onAudio: vi.fn(),
       onClearAudio: vi.fn(),
+      onToolCall: vi.fn(),
+      onError,
     });
     await bridge.connect();
 
     expect(bridge.supportsToolResultContinuation).toBe(false);
     const connectParams = connectMock.mock.calls[0]?.[0] as {
       config?: { tools?: Array<{ functionDeclarations?: Array<Record<string, unknown>> }> };
+      callbacks: { onmessage: (message: unknown) => void };
     };
     const declaration = connectParams.config?.tools?.[0]?.functionDeclarations?.[0];
-    expect(declaration?.name).toBe("openclaw_agent_consult");
-    expect(declaration).not.toHaveProperty("behavior");
+    expect(declaration).toMatchObject({ name: "openclaw_agent_consult", behavior: "NON_BLOCKING" });
+
+    const session = await connectMock.mock.results[0]?.value;
+    connectParams.callbacks.onmessage({ setupComplete: {} });
+    connectParams.callbacks.onmessage({
+      toolCall: { functionCalls: [{ id: "call-1", name: "openclaw_agent_consult", args: {} }] },
+    });
+    expect(() =>
+      bridge.submitToolResult("call-1", { status: "working" }, { willContinue: true }),
+    ).toThrow(/does not support continuing/);
+    bridge.submitToolResult("call-1", { text: "done" });
+    expect(session.sendToolResponse).toHaveBeenCalledTimes(1);
+    expect(session.sendToolResponse).toHaveBeenCalledWith({
+      functionResponses: [
+        {
+          id: "call-1",
+          name: "openclaw_agent_consult",
+          response: { text: "done" },
+          scheduling: "WHEN_IDLE",
+        },
+      ],
+    });
   });
 
   it("fails bridge creation with the missing project and location named", () => {
