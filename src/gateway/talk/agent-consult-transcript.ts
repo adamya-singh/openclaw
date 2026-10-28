@@ -12,3 +12,16 @@ export const prepareTalkAgentConsultTranscript: PrepareAssistantTranscriptMessag
       !message.content.some((block) => block.type === "toolCall"),
     message,
   });
+
+// Forced routing speaks the final answer verbatim, so the spoken mirror already carries it.
+// Keeping both in model history shows the model each answer twice, and it starts repeating
+// itself in later turns; the hidden final stays for audit only.
+export const prepareForcedTalkAgentConsultTranscript: PrepareAssistantTranscriptMessage = (
+  message,
+  sourceText,
+) => {
+  const prepared = prepareTalkAgentConsultTranscript(message, sourceText);
+  return Reflect.get(prepared, "display") === false
+    ? Object.assign({}, prepared, { excludeFromContext: true as const })
+    : prepared;
+};

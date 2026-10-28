@@ -19,7 +19,10 @@ import { abortChatRunById } from "../chat-abort.js";
 import { handleTrustedInternalChatSend } from "../server-methods/chat-send-handler.js";
 import type { GatewayRequestHandlerOptions } from "../server-methods/shared-types.js";
 import { formatForLog } from "../ws-log.js";
-import { prepareTalkAgentConsultTranscript } from "./agent-consult-transcript.js";
+import {
+  prepareForcedTalkAgentConsultTranscript,
+  prepareTalkAgentConsultTranscript,
+} from "./agent-consult-transcript.js";
 import { resolveTalkAgentConsultAuthority } from "./client-gateway-control.js";
 import { registerTalkRealtimeRelayAgentRun } from "./relay/operations.js";
 import type { RelayAgentRunRegistration } from "./relay/state.js";
@@ -136,7 +139,10 @@ export async function startTalkRealtimeAgentConsult(
       toolsAllow: authority.toolsAllow,
       extraSystemPrompt: normalizedTalk?.consultInstructions,
       transcript: { display: false, excludeFromContext: true },
-      prepareAssistantTranscriptMessage: prepareTalkAgentConsultTranscript,
+      prepareAssistantTranscriptMessage:
+        normalizedTalk?.realtime?.consultRouting === "force-agent-consult"
+          ? prepareForcedTalkAgentConsultTranscript
+          : prepareTalkAgentConsultTranscript,
       beforeDispatch: async ({ runId, assertCurrent, assertWorkAdmissionCurrent }) => {
         let relayRegistration: RelayAgentRunRegistration | undefined;
         let releaseClient: void | (() => void);

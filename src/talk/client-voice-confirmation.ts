@@ -519,14 +519,27 @@ function normalizeUtterance(text: string): string {
   );
 }
 
+const AFFIRMATION_START =
+  /^(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|proceed|go ahead|do it|send it|make the change|restart it)\b/;
+// Every word of a short reply must be affirmation vocabulary, so "okay what's the weather"
+// stays a new request while "Yes, confirm." or "yeah do it please" answers the question.
+const AFFIRMATION_WORDS = new Set(
+  "yes yeah yep yup sure ok okay confirm confirmed proceed go ahead do it please send make the change restart open run that absolutely definitely correct right".split(
+    " ",
+  ),
+);
+
 function isExplicitAffirmation(text: string): boolean {
   const normalized = normalizeUtterance(text);
   if (REFUSAL_PATTERN.test(normalized)) {
     return false;
   }
   // English-only phrases are an accepted first version; localized matching is follow-up work.
-  return /^(yes|yes do it|do it|confirm|confirmed|go ahead|proceed|send it|make the change|restart it)$/.test(
-    normalized,
+  const words = normalized.split(" ");
+  return (
+    words.length <= 6 &&
+    AFFIRMATION_START.test(normalized) &&
+    words.every((word) => AFFIRMATION_WORDS.has(word))
   );
 }
 

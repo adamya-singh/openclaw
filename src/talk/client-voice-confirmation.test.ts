@@ -555,6 +555,28 @@ describe("client voice confirmation", () => {
     },
   );
 
+  it.each(["Yes, confirm.", "Yeah, do it", "yes please", "Okay, go ahead", "yep"])(
+    "accepts the short affirmation %j",
+    (text) => {
+      const confirmationId = block({ voiceSessionId: "voice-1", now: 100 });
+      noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-1", text, timestamp: 101 });
+      expect(
+        authorizeClientVoiceConfirmation({ voiceSessionId: "voice-1", confirmationId, now: 102 }),
+      ).toMatchObject({ confirmationId });
+    },
+  );
+
+  it.each(["Did you open it?", "ok what's the weather", "yes but wait", "maybe"])(
+    "does not treat %j as an affirmation",
+    (text) => {
+      const confirmationId = block({ voiceSessionId: "voice-1", now: 100 });
+      noteClientVoiceConfirmationUtterance({ voiceSessionId: "voice-1", text, timestamp: 101 });
+      expect(() =>
+        authorizeClientVoiceConfirmation({ voiceSessionId: "voice-1", confirmationId, now: 102 }),
+      ).toThrow("explicit spoken confirmation was not found");
+    },
+  );
+
   it("consumes an approved fingerprint once", () => {
     const toolParams = { action: "send", message: "A" };
     const confirmationId = block({ voiceSessionId: "voice-1", toolParams, now: 100 });
