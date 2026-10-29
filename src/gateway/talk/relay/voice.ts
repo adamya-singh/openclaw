@@ -17,9 +17,12 @@ import {
   VOICE_TRANSCRIPT_QUEUE_POLICY,
 } from "../../../talk/voice-transcript.js";
 import { sleep } from "../../../utils/sleep.js";
-import { drainingRelaySessions, type RelaySession } from "./state.js";
+import { drainingRelaySessions, type RelaySession, waitForRelayAgentRunsIdle } from "./state.js";
 
 const RELAY_TRANSCRIPT_RETRY_DELAYS_MS = [0, 500, 2_000] as const;
+// Longest a transcript write waits for this relay's agent runs; past it, the write
+// lands anyway and a still-running turn may need to be retried.
+const RELAY_TRANSCRIPT_RUN_HOLD_MAX_MS = 90_000;
 
 function logRelayVoiceFailure(session: RelaySession, message: string, error: unknown): void {
   session.context.logGateway?.warn(`${message}: ${formatErrorMessage(error)}`);
@@ -123,6 +126,8 @@ export function enqueueRelayVoiceTranscript(
           if (!(await ensureRelayVoiceSession(session))) {
             throw new Error("Realtime voice session could not be recorded");
           }
+          // Speech while the agent works must not land inside its run.
+          await waitForRelayAgentRunsIdle(session, RELAY_TRANSCRIPT_RUN_HOLD_MAX_MS);
           const writer = captureClientVoiceSessionWriter({
             agentId,
             physicalSource: captureRelayVoiceSessionSource(session),

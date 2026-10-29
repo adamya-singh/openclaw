@@ -6,6 +6,7 @@ import type { RealtimeVoiceAgentConsultRunner } from "../../../talk/provider-typ
 import { abortChatRunById } from "../../chat-abort.js";
 import type { TalkAgentConsultRequest } from "../client-agent-consult.types.js";
 import {
+  deleteRelayAgentRun,
   hasRelayAgentRunRegistrations,
   type RelayAgentRun,
   type RelayAgentRunRegistration,
@@ -116,7 +117,7 @@ export function createRelayAgentRunRegistration(
         session.activeAgentRuns.get(params.runId) === run &&
         !hasRelayAgentRunRegistrations(session, run)
       ) {
-        session.activeAgentRuns.delete(params.runId);
+        deleteRelayAgentRun(session, params.runId);
         run.releaseVoice?.();
       }
     };

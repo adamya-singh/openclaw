@@ -457,10 +457,60 @@ export function hasRelayAgentRunRegistrations(
   );
 }
 
+const relayAgentRunIdleWaiters = new WeakMap<RelaySession, Set<() => void>>();
+// Runs normally wake waiters on release; the recheck catches runs whose chat entry
+// disappeared without a release, which only pruning observes.
+const RELAY_AGENT_RUN_IDLE_RECHECK_MS = 5_000;
+
+/** Drop one run's relay correlation and wake transcript writes held for an idle relay. */
+export function deleteRelayAgentRun(session: RelaySession, runId: string): void {
+  session.activeAgentRuns.delete(runId);
+  if (session.activeAgentRuns.size === 0) {
+    for (const wake of relayAgentRunIdleWaiters.get(session) ?? []) {
+      wake();
+    }
+  }
+}
+
+/**
+ * Wait until no agent run started by this relay is active, bounded by maxWaitMs.
+ * Agent runs fence their session transcript between reading and using it, so a
+ * voice transcript append mid-run aborts the run ("Session transcript changed
+ * during context read"); voice writes wait here and then land in order.
+ */
+export async function waitForRelayAgentRunsIdle(
+  session: RelaySession,
+  maxWaitMs: number,
+): Promise<void> {
+  const deadline = Date.now() + maxWaitMs;
+  while (
+    !session.closing &&
+    relaySessions.get(session.id) === session &&
+    pruneInactiveRelayAgentRuns(session) > 0
+  ) {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const waiters = relayAgentRunIdleWaiters.get(session) ?? new Set<() => void>();
+      relayAgentRunIdleWaiters.set(session, waiters);
+      const wake = () => {
+        clearTimeout(timer);
+        waiters.delete(wake);
+        resolve();
+      };
+      const timer = setTimeout(wake, Math.min(remaining, RELAY_AGENT_RUN_IDLE_RECHECK_MS));
+      timer.unref?.();
+      waiters.add(wake);
+    });
+  }
+}
+
 export function pruneInactiveRelayAgentRuns(session: RelaySession): number {
   for (const runId of session.activeAgentRuns.keys()) {
     if (!session.context.chatAbortControllers.has(runId)) {
-      session.activeAgentRuns.delete(runId);
+      deleteRelayAgentRun(session, runId);
     }
   }
   for (const [callId, { run }] of session.activeAgentToolCalls) {

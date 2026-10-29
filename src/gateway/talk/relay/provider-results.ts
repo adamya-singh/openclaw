@@ -2,6 +2,7 @@ import { buildRealtimeVoiceAgentCancelProviderResult } from "../../../talk/agent
 import type { RealtimeVoiceToolResultOptions } from "../../../talk/provider-types.js";
 import {
   broadcastToOwner,
+  deleteRelayAgentRun,
   hasRelayAgentRunRegistrations,
   relaySessions,
   resolveRelayProviderToolCallId,
@@ -182,6 +183,6 @@ export function clearRelayAgentToolCall(session: RelaySession, callId: string): 
     session.activeAgentRuns.get(run.runId) === run &&
     !hasRelayAgentRunRegistrations(session, run)
   ) {
-    session.activeAgentRuns.delete(run.runId);
+    deleteRelayAgentRun(session, run.runId);
   }
 }
