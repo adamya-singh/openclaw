@@ -75,6 +75,7 @@ export function prepareTalkClientControlAuthority(params: {
   return resolveInboundReplyToolAuthorityOverlay({
     ctx,
     sessionEntry: prepared.sessionEntry,
+    operatorAuthority: params.authority.operatorAuthority,
     senderIsOwner: resolveCommandAuthorization({
       ctx,
       cfg: params.config,

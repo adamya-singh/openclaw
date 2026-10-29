@@ -77,7 +77,15 @@ export function createTalkRealtimeRunControlOwner(params: {
     const intent = resolveRealtimeVoiceAgentControlIntent({ text });
     const intrinsic = intent.mode === "status" || intent.mode === "cancel";
     const allowIdle = params.controlSource === "delegation" || params.supportsToolCalls === false;
-    if (!intent.shouldAutoControl || (!params.hasActiveRun() && !(allowIdle && intrinsic))) {
+    // A tool-calling transcript provider steers through openclaw_agent_control with the
+    // caller's request authority; a transcript-side steer would only duplicate it.
+    const providerSteers =
+      params.controlSource === "transcript" && params.supportsToolCalls !== false && !intrinsic;
+    if (
+      !intent.shouldAutoControl ||
+      providerSteers ||
+      (!params.hasActiveRun() && !(allowIdle && intrinsic))
+    ) {
       return "consult";
     }
     const reply = (message: string) =>

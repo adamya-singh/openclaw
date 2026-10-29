@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { GATEWAY_CLIENT_CAPS } from "../../../packages/gateway-protocol/src/client-info.js";
+import type { AdmittedRunOperatorAuthority } from "../../agents/admitted-run-context.js";
 import type { ReplyToolAuthorityOverlay } from "../../auto-reply/reply/reply-run-registry.contracts.js";
 import { formatErrorMessage as formatError, readErrorName } from "../../infra/errors.js";
 import {
@@ -28,6 +29,7 @@ import type { TalkEvent } from "../../talk/talk-events.js";
 import { ADMIN_SCOPE, WRITE_SCOPE } from "../operator-scopes.js";
 import { resolveChatSendCallerContext } from "../server-methods/gateway-client-identity.js";
 import type { GatewayRequestContext } from "../server-methods/shared-types.js";
+import { captureGatewayUiCommandTarget } from "../ui-command-target.js";
 import type {
   LifecycleBoundTalkAgentConsult,
   ReusableTalkAgentConsult,
@@ -49,10 +51,19 @@ import { isTalkVoiceSessionReplacing } from "./voice-selection.js";
 const owners = new Map<string, GatewayControlOwner>();
 const pendingOwners = new Set<GatewayControlOwner>();
 
+type TalkReplyCaller = ReturnType<typeof resolveChatSendCallerContext> & {
+  GatewayUiCommandTarget?: ReturnType<typeof captureGatewayUiCommandTarget>;
+};
+
 export type TalkAgentConsultAuthority = {
   senderIsOwner: boolean;
   toolsAllow?: string[];
-  replyCaller?: ReturnType<typeof resolveChatSendCallerContext>;
+  replyCaller?: TalkReplyCaller;
+  /**
+   * Operator authority captured for this request, as chat.send admission captures it.
+   * Chat-backed consult runs fingerprint it, so steering must carry the same authority.
+   */
+  operatorAuthority?: AdmittedRunOperatorAuthority;
 };
 
 export function resolveTalkAgentConsultAuthority(
@@ -60,12 +71,20 @@ export function resolveTalkAgentConsultAuthority(
   client?: Parameters<typeof resolveChatSendCallerContext>[0],
 ): TalkAgentConsultAuthority {
   const senderIsOwner = scopes?.includes(ADMIN_SCOPE) === true;
-  const replyCaller = client ? resolveChatSendCallerContext(client) : undefined;
+  // Keep the caller object's identity: command-sender authority is attached to it.
+  const replyCaller: TalkReplyCaller | undefined = client
+    ? resolveChatSendCallerContext(client)
+    : undefined;
   if (replyCaller) {
     // Talk has no task-suggestion acceptance UI, even when its hosting client does.
     replyCaller.GatewayClientCaps = replyCaller.GatewayClientCaps.filter(
       (cap) => cap !== GATEWAY_CLIENT_CAPS.TASK_SUGGESTIONS,
     );
+    // chat.send binds the caller's UI target into the run's tool authority; steering
+    // overlays built from this caller must carry the same target to match it.
+    replyCaller.GatewayUiCommandTarget = client?.connect?.client
+      ? captureGatewayUiCommandTarget(client)
+      : undefined;
   }
   if (senderIsOwner || scopes?.includes(WRITE_SCOPE) === true) {
     return { senderIsOwner, ...(replyCaller ? { replyCaller } : {}) };

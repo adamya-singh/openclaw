@@ -20,6 +20,7 @@ import {
   resolveInternalRealtimeVoiceGatewayRelayLaunchError,
 } from "../../../talk/provider-internal.js";
 import { resolveConfiguredRealtimeVoiceProvider } from "../../../talk/provider-resolver.js";
+import { captureGatewayOperatorRunAuthority } from "../../operator-run-authority.js";
 import { ADMIN_SCOPE, hasGatewayAdminScope } from "../../operator-scopes.js";
 import { resolveSandboxedSessionCreation } from "../../operator-session-run.js";
 import { readGatewayRequestMutationAuthority } from "../../server-methods/session-mutation-guards.js";
@@ -520,10 +521,13 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
   "talk.session.steer": defineValidatedGatewayHandler(
     "talk.session.steer",
     validateTalkSessionSteerParams,
-    async ({ params, respond, client, sessionMutationAuthorization }) => {
+    async ({ params, respond, client, context, sessionMutationAuthorization }) => {
       const session = getUnifiedTalkSession(params.sessionId);
       if (session.kind === "realtime-relay") {
         const connId = requireUnifiedTalkSessionConn(session, client?.connId);
+        // Chat-backed consult runs are admitted with the caller's operator authority and
+        // fingerprint it; steering without it is rejected as tool_authority_mismatch.
+        const operator = await captureGatewayOperatorRunAuthority({ client, context });
         const assertCurrent = () => {
           sessionMutationAuthorization?.assertCurrent();
           if (
@@ -535,15 +539,23 @@ export const talkSessionHandlers: GatewayRequestHandlers = {
           }
         };
         assertCurrent();
-        const result = await steerTalkRealtimeRelayAgentRun({
-          relaySessionId: session.relaySessionId,
-          connId,
-          authority: resolveTalkAgentConsultAuthority(client?.connect?.scopes, client),
-          sessionKey: normalizeOptionalString(params.sessionKey),
-          text: params.text,
-          mode: params.mode,
-          assertCurrent,
-        });
+        let result;
+        try {
+          result = await steerTalkRealtimeRelayAgentRun({
+            relaySessionId: session.relaySessionId,
+            connId,
+            authority: {
+              ...resolveTalkAgentConsultAuthority(client?.connect?.scopes, client),
+              ...(operator ? { operatorAuthority: operator.authority } : {}),
+            },
+            sessionKey: normalizeOptionalString(params.sessionKey),
+            text: params.text,
+            mode: params.mode,
+            assertCurrent,
+          });
+        } finally {
+          operator?.release();
+        }
         respondOk(respond, result);
         return;
       }

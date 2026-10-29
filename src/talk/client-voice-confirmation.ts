@@ -546,24 +546,26 @@ function normalizeUtterance(text: string): string {
 }
 
 const AFFIRMATION_START =
-  /^(yes|yeah|yep|yup|sure|ok|okay|confirm|confirmed|proceed|go ahead|do it|send it|make the change|restart it)\b/;
+  /^(yes|yeah|yep|yup|sure|ok|okay|alright|confirm|confirmed|i confirm|approved?|proceed|go ahead|go for it|do it|send it|make the change|restart it|of course|absolutely|definitely)\b/;
+// Words that turn an otherwise affirmative reply into hesitation or a question.
+const HESITATION_PATTERN = /\b(wait|hold|not|but|why|what|how)\b/;
 // Every word of a short reply must be affirmation vocabulary, so "okay what's the weather"
 // stays a new request while "Yes, confirm." or "yeah do it please" answers the question.
 const AFFIRMATION_WORDS = new Set(
-  "yes yeah yep yup sure ok okay confirm confirmed proceed go ahead do it please send make the change restart open run that absolutely definitely correct right".split(
+  "yes yeah yep yup sure ok okay alright confirm confirmed proceed i approve approved you do can may have go ahead for it please send make the change restart open run that that's is fine good absolutely definitely totally of course correct right".split(
     " ",
   ),
 );
 
 function isExplicitAffirmation(text: string): boolean {
   const normalized = normalizeUtterance(text);
-  if (REFUSAL_PATTERN.test(normalized)) {
+  if (REFUSAL_PATTERN.test(normalized) || HESITATION_PATTERN.test(normalized)) {
     return false;
   }
   // English-only phrases are an accepted first version; localized matching is follow-up work.
   const words = normalized.split(" ");
   return (
-    words.length <= 6 &&
+    words.length <= 7 &&
     AFFIRMATION_START.test(normalized) &&
     words.every((word) => AFFIRMATION_WORDS.has(word))
   );
