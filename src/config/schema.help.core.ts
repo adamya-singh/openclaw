@@ -271,6 +271,8 @@ export const CORE_FIELD_HELP: Record<string, string> = {
     "Use this to override the thinking level for the regular agent run behind Talk realtime consults.",
   "talk.consultFastMode":
     "Use this to set true or false fast mode for the regular agent run behind Talk realtime consults.",
+  "talk.voiceConfirmations":
+    'Set false to let Talk voice runs use high-impact tools without a spoken yes, like text chat. Saying "abort" still stops the agent\'s work. Default true.',
   "talk.consultInstructions":
     "Extra system prompt text for the regular agent run behind Talk realtime consults, appended after the built-in voice guidance. Use it to tell the agent how to behave when you talk to it by voice.",
   "talk.speechLocale":

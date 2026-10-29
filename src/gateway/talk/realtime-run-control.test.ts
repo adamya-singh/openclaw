@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTalkRealtimeRunControlOwner } from "./realtime-run-control.js";
+import {
+  createTalkRealtimeRunControlOwner,
+  isRealtimeVoiceAbortAll,
+} from "./realtime-run-control.js";
 
-function createOwner(supportsToolCalls?: boolean) {
+function createOwner(supportsToolCalls?: boolean, hasActiveRun = true) {
   const prepare = vi.fn(() => async () => ({ ok: true }) as never);
   const owner = createTalkRealtimeRunControlOwner({
     controlSource: "transcript",
     supportsToolCalls,
-    hasActiveRun: () => true,
+    supportsAbortAll: true,
+    hasActiveRun: () => hasActiveRun,
     prepare,
     speak: vi.fn(),
     warn: vi.fn(),
@@ -34,5 +38,25 @@ describe("realtime Talk transcript run control", () => {
     const { owner, prepare } = createOwner(true);
     expect(owner.handleSpoken("cancel that")).toBe(true);
     expect(prepare).toHaveBeenCalledWith({ text: "cancel that", mode: "cancel" });
+  });
+
+  it.each(["Abort.", "abort abort", "Okay, abort everything you're doing", "wait, ABORT"])(
+    "treats %j as the stop-everything word",
+    (text) => {
+      expect(isRealtimeVoiceAbortAll(text)).toBe(true);
+    },
+  );
+
+  it.each(["don't abort it", "do not abort", "about the board", "aborted mission files"])(
+    "does not treat %j as the stop-everything word",
+    (text) => {
+      expect(isRealtimeVoiceAbortAll(text)).toBe(false);
+    },
+  );
+
+  it("stops all chat work on abort even when no voice run is active", () => {
+    const { owner, prepare } = createOwner(true, false);
+    expect(owner.handleSpoken("abort")).toBe(true);
+    expect(prepare).toHaveBeenCalledWith({ text: "abort", mode: "cancel", stopAll: true });
   });
 });

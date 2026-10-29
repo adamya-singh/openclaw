@@ -150,6 +150,8 @@ export function normalizeTalkSection(value: TalkConfig | undefined): TalkConfig 
     consultThinkingLevel: normalizeThinkLevel(normalizeOptionalString(value.consultThinkingLevel)),
     consultFastMode: parseBoolean(normalizeFastMode(value.consultFastMode)),
     consultInstructions: normalizeOptionalString(value.consultInstructions),
+    voiceConfirmations:
+      typeof value.voiceConfirmations === "boolean" ? value.voiceConfirmations : undefined,
     silenceTimeoutMs: normalizeInteger(value.silenceTimeoutMs, 1),
     providers: normalizeTalkProviders(value.providers),
     realtime: normalizeTalkRealtimeConfig(value.realtime),

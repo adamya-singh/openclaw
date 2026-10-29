@@ -80,6 +80,13 @@ export function hasBeforeToolCallPolicy(): boolean {
   return state.hasBeforeToolCallHook || state.trustedToolPolicies.length > 0;
 }
 
+/** Voice runs need spoken approval for high-impact tools unless the operator turned it off. */
+function resolveConfirmingVoiceRun(ctx: HookContext | undefined) {
+  return ctx?.config?.talk?.voiceConfirmations === false
+    ? undefined
+    : resolveClientVoiceRunBinding(ctx?.runId);
+}
+
 /** Consume voice approval only after tool-owned finalization produces execution params. */
 export function consumeFinalClientVoiceToolConfirmation(args: {
   toolName: string;
@@ -92,7 +99,7 @@ export function consumeFinalClientVoiceToolConfirmation(args: {
   if (isCodeModeExecToolKind(args.toolKind)) {
     return { allowed: true as const };
   }
-  const voiceRun = resolveClientVoiceRunBinding(args.ctx?.runId);
+  const voiceRun = resolveConfirmingVoiceRun(args.ctx);
   return consumeClientVoiceToolConfirmationPolicy({
     agentId: voiceRun?.agentId,
     voiceSessionId: voiceRun?.voiceSessionId,
@@ -176,7 +183,7 @@ export async function runBeforeToolCallHook(args: {
     const policyRegistry = getGlobalHookRunnerRegistry() ?? undefined;
     const shouldRunTrustedPolicies = hasTrustedToolPolicies(policyRegistry);
     const normalizedParams = isPlainObject(params) ? params : {};
-    const voiceRun = resolveClientVoiceRunBinding(args.ctx?.runId);
+    const voiceRun = resolveConfirmingVoiceRun(args.ctx);
     // Nested catalog calls are gated individually; the script wrapper is not itself an action.
     const voiceConfirmation = isCodeModeExecToolKind(args.toolKind)
       ? { allowed: true as const }

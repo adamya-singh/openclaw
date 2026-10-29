@@ -90,6 +90,31 @@ describe("spoken confirmation authority reaches the final tool effect", () => {
     vi.restoreAllMocks();
   });
 
+  it.each([
+    [undefined, false],
+    [false, true],
+  ])(
+    "runs a voice action without a spoken yes only when talk.voiceConfirmations=%s",
+    async (voiceConfirmations, runsWithoutYes) => {
+      const runId = "run-auto-approve";
+      bindVoiceRuns([runId]);
+      const execute = vi.fn().mockResolvedValue({ content: [], details: { ok: true } });
+      const tool = wrapToolWithBeforeToolCallHook(
+        { name: "message", execute } as unknown as AnyAgentTool,
+        {
+          runId,
+          agentId: "main",
+          sessionKey: "agent:main:voice",
+          config: { talk: { voiceConfirmations } },
+        },
+      );
+      await tool
+        .execute("call-1", SEND, undefined, {} as Parameters<typeof tool.execute>[3])
+        .catch(() => undefined);
+      expect(execute).toHaveBeenCalledTimes(runsWithoutYes ? 1 : 0);
+    },
+  );
+
   it("executes marked Code Mode scripts while still confirming plain shell exec", async () => {
     const runId = "run-code-mode";
     bindVoiceRuns([runId]);

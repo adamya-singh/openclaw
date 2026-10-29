@@ -465,6 +465,60 @@ export async function flushTalkRealtimeRelayVoiceWrites(params: {
   await getRelaySession(params.relaySessionId, params.connId).voiceTranscriptQueue.flush();
 }
 
+/**
+ * Spoken "abort": cancel the voice run, then every other run in this chat and the
+ * subagents the chat spawned, the same targets as chat's /stop.
+ */
+export function prepareTalkRealtimeRelayAbortAll(params: {
+  relaySessionId: string;
+  connId: string;
+  text: string;
+}): () => Promise<RealtimeVoiceAgentControlResult> {
+  const session = getRelaySession(params.relaySessionId, params.connId);
+  const cancelVoiceRun = prepareTalkRealtimeRelayAgentControl({ ...params, mode: "cancel" });
+  return async () => {
+    const result = await cancelVoiceRun();
+    const { agentId, canonicalKey } = session.sessionTarget;
+    let stoppedRuns = result.aborted === true ? 1 : 0;
+    for (const [runId, entry] of session.context.chatAbortControllers) {
+      if (
+        entry.sessionKey === canonicalKey &&
+        abortChatRunById(session.context, {
+          runId,
+          sessionKey: canonicalKey,
+          stopReason: "voice abort",
+        }).aborted
+      ) {
+        stoppedRuns += 1;
+      }
+    }
+    // Subagent control loads the subagent registry; keep it off the relay's import path.
+    const { stopSubagentsForRequester } =
+      await import("../../../auto-reply/reply/abort-operation.js");
+    const subagents = await stopSubagentsForRequester({
+      cfg: session.context.getRuntimeConfig(),
+      requesterSessionKey: canonicalKey,
+      requesterAgentId: agentId,
+    }).catch((error: unknown) => {
+      session.context.logGateway.warn(
+        `talk relay: abort could not stop subagents: ${formatError(error)}`,
+      );
+      return { stopped: 0, failed: 1 };
+    });
+    const stopped = stoppedRuns > 0 || subagents.stopped > 0;
+    return {
+      ...result,
+      ok: subagents.failed === 0,
+      mode: "cancel",
+      aborted: stopped,
+      message: stopped ? "Stopped." : "Nothing was running.",
+      speak: true,
+      show: true,
+      suppress: false,
+    };
+  };
+}
+
 export async function steerTalkRealtimeRelayAgentRun(params: {
   relaySessionId: string;
   connId: string;

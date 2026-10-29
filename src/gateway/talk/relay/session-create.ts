@@ -31,6 +31,7 @@ import {
   cancelTalkRealtimeRelayProviderToolCall,
   closeRelaySession,
   registerTalkRealtimeRelayAgentRun,
+  prepareTalkRealtimeRelayAbortAll,
   prepareTalkRealtimeRelayAgentControl,
 } from "./operations.js";
 import { submitFinalProviderToolResult, suppressedToolResultOptions } from "./provider-results.js";
@@ -198,6 +199,7 @@ export function createTalkRealtimeRelaySession(
   const runControl = createTalkRealtimeRunControlOwner({
     controlSource: params.controlSource,
     supportsToolCalls: params.capabilities?.supportsToolCalls,
+    supportsAbortAll: true,
     hasActiveRun: () => {
       const relay = getActiveRelay();
       return Boolean(relay && pruneInactiveRelayAgentRuns(relay) > 0);
@@ -210,6 +212,9 @@ export function createTalkRealtimeRelaySession(
       const text = (args as { text?: unknown }).text;
       if (typeof text !== "string") {
         throw new Error("Realtime relay control text is required");
+      }
+      if ((args as { stopAll?: unknown }).stopAll === true) {
+        return prepareTalkRealtimeRelayAbortAll({ relaySessionId, connId: params.connId, text });
       }
       return prepareTalkRealtimeRelayAgentControl({
         relaySessionId,
