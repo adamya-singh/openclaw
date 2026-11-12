@@ -1,0 +1,43 @@
+{
+  "id": "good-advice",
+  "name": "Good Advice",
+  "description": "Lets the agent weave one saved line from the Agentic Journal \"Good advice\" bookmarks folder into a reply: when it fits the conversation, or once a day unprompted.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "journalUrl": {
+        "type": "string",
+        "description": "Agentic Journal base URL. Default http://127.0.0.1:3000."
+      },
+      "folderName": {
+        "type": "string",
+        "description": "Bookmark folder to draw advice from. Default \"Good advice\"."
+      },
+      "cardsPath": {
+        "type": "string",
+        "description": "Curated advice cards file. Default ~/.openclaw/good-advice/cards.json."
+      },
+      "matchThreshold": {
+        "type": "number",
+        "minimum": 0.5,
+        "description": "Trigger score a card needs to count as matching the current message. Default 2.5."
+      },
+      "maxMatchedPerDay": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Matched advice allowed per day across all conversations. Default 3."
+      },
+      "maxDailyOffers": {
+        "type": "number",
+        "minimum": 0,
+        "description": "Times per day the unprompted remark is offered before giving up. Default 3; 0 turns it off."
+      },
+      "cooldownDays": {
+        "type": "number",
+        "minimum": 1,
+        "description": "Days before a used quote may come back. Default 30."
+      }
+    }
+  }
+}
